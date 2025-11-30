@@ -180,15 +180,25 @@ class BootScene extends Phaser.Scene {
   }
   preload() {
     this.load.setPath("assets/images");
-    // this.load.setPath("/MyDefenseGame/assets/images");
 
     // 메인 메뉴 배경 이미지 로드(스토리,지옥,협동)
     this.load.image("menu_bg", "background2.png");
-    this.load.image("game_bg", "background3.png");
     this.load.image("mode_normal", "background2.png");
     this.load.image("mode_hard", "mode_hard.png");
     this.load.image("mode_multi", "mode_multi.png");
 
+    // 인게임 배경화면
+    this.load.image("bg_stage1", "background3.png"); // 1~10라운드
+    this.load.image("bg_stage2", "background4.png"); // 11~20라운드
+    this.load.image("bg_stage3", "background5.png"); // 21~30라운드
+    this.load.image("bg_stage4", "background6.png"); // 31~40라운드
+    this.load.image("bg_stage5", "background7.png"); // 41~50라운드
+    this.load.image("bg_stage6", "background8.png");
+    this.load.image("bg_stage7", "background9.png");
+    this.load.image("bg_stage8", "background10.png");
+    this.load.image("bg_stage9", "background11.png");
+
+    // 클리어 이미지
     this.load.image("game_clear_bg", "game_clear.png");
 
     // [★★★ 공격 모션 ★★★]
@@ -874,10 +884,11 @@ class GameScene extends Phaser.Scene {
   create() {
     // 배경
     this.bg = this.add
-      .image(640, 360, "game_bg")
+      .image(640, 360, "bg_stage1")
       .setOrigin(0.5)
       .setDisplaySize(1280, 720)
       .setInteractive();
+    this.bg.setDepth(-100);
 
     this.input.setDefaultCursor(
       "url(assets/images/cursor.png), 14 0, pointer'"
@@ -1804,6 +1815,44 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // [라운드별 배경 교체 함수]
+  updateBackground() {
+    let newBgKey = "bg_stage1";
+
+    if (this.round >= 81) {
+      newBgKey = "bg_stage9"; // 81~90 (무잔 등)
+    } else if (this.round >= 71) {
+      newBgKey = "bg_stage8"; // 71~80 (코쿠시보)
+    } else if (this.round >= 61) {
+      newBgKey = "bg_stage7"; // 61~70 (도우마)
+    } else if (this.round >= 51) {
+      newBgKey = "bg_stage6"; // 51~60 (아카자)
+    } else if (this.round >= 41) {
+      newBgKey = "bg_stage5"; // 41~50 (한텐구)
+    } else if (this.round >= 31) {
+      newBgKey = "bg_stage4"; // 31~40 (굣코)
+    } else if (this.round >= 21) {
+      newBgKey = "bg_stage3"; // 21~30 (다키)
+    } else if (this.round >= 11) {
+      newBgKey = "bg_stage2"; // 11~20 (엔무)
+    }
+
+    if (this.bg.texture.key !== newBgKey) {
+      this.bg.setTexture(newBgKey);
+
+      this.bg.setDisplaySize(1280, 720);
+
+      this.tweens.add({
+        targets: this.bg,
+        alpha: { from: 0.5, to: 1 },
+        duration: 1000,
+        ease: "Power2",
+      });
+
+      console.log(`배경 변경됨: ${newBgKey} (현재 라운드: ${this.round})`);
+    }
+  }
+
   drawGrid() {
     this.add.rectangle(
       this.gridOffsetX +
@@ -2511,13 +2560,14 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // [수정] 실제 라운드 값 갱신 (방장/참가자 모두 실행)
+  // 실제 라운드 값 갱신 (방장/참가자 모두 실행)
   handleRoundEnd(serverRound) {
     // 서버에서 준 라운드 값으로 덮어씌움 (동기화)
     if (serverRound) this.round = serverRound;
     else this.round++;
 
-    this.currentTime = GAME_CONFIG.roundTime; // 시간 초기화
+    this.updateBackground();
+    this.currentTime = GAME_CONFIG.roundTime;
     this.bossSpawned = false;
     this.spawnTimer.paused = false;
 

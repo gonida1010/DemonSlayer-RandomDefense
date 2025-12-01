@@ -867,9 +867,9 @@ class GameScene extends Phaser.Scene {
       case 1:
         return "#bdc3c7";
       case 2:
-        return "#3498db";
-      case 3:
         return "#2ecc71";
+      case 3:
+        return "#3498db";
       case 4:
         return "#9b59b6";
       case 5:
@@ -1982,7 +1982,7 @@ class GameScene extends Phaser.Scene {
         .text(1260, 700, `Together with: ${partnerName}`, {
           fontFamily: "Cafe24ClassicType",
           fontSize: "22px",
-          color: "#9b59b6", // 보라색
+          color: "#9b59b6",
           stroke: "#000",
           strokeThickness: 4,
         })
@@ -2875,9 +2875,6 @@ class GameScene extends Phaser.Scene {
 
     this.createUnitAt(slot.x, slot.y, randomKey);
 
-    // // 소환 이벤트 화면 출력
-    // this.showSummonEffect(randomKey, targetTier);
-
     // 3티어 뽑으면 축하 이펙트 텍스트
     if (targetTier === 3) {
       const luckyText = this.add
@@ -2927,84 +2924,53 @@ class GameScene extends Phaser.Scene {
     const ownerPrefix = socket && socket.id ? socket.id : "guest";
     unit.myUniqueId = `${ownerPrefix}_${Date.now()}_${Math.random()}`;
 
-    // ==============================================================
-    // [핵심 수정] 마우스 오버 이벤트 (색상 로직 재확인)
-    // ==============================================================
-    unit.on("pointerover", () => {
-      // 1. 티어별 색상 코드 정의 (확실하게 지정)
-      let nameColor = "#ffffff"; // 텍스트용 (String)
-      let circleColor = 0xffffff; // 그래픽용 (Number)
+    this.setupUnitEvents(unit);
+    this.gridState[gy][gx] = unit;
+    this.units.add(unit);
+  }
 
-      switch (unit.dataVal.tier) {
-        case 1:
-          nameColor = "#bdc3c7"; // 회색
-          circleColor = 0xbdc3c7;
-          break;
-        case 2:
-          nameColor = "#3498db"; // 파랑
-          circleColor = 0x3498db;
-          break;
-        case 3:
-          nameColor = "#2ecc71"; // 초록
-          circleColor = 0x2ecc71;
-          break;
-        case 4:
-          nameColor = "#9b59b6"; // 보라
-          circleColor = 0x9b59b6;
-          break;
-        case 5:
-          nameColor = "#e67e22"; // 주황
-          circleColor = 0xe67e22;
-          break;
-        case 6:
-          nameColor = "#e74c3c"; // 빨강
-          circleColor = 0xe74c3c;
-          break;
-      }
+  // [신규] 필드 좌표에 유닛 직접 생성 (조합용)
+  createUnitDirectly(x, y, key) {
+    const unit = this.add.sprite(x, y, key).setInteractive({ draggable: true });
 
-      // 2. 툴팁 텍스트 설정
-      const tierStr = "★".repeat(unit.dataVal.tier);
-      this.hoverText.setText(`${tierStr} ${unit.dataVal.name}`);
+    unit.setDisplaySize(80, 85);
+    unit.unitKey = key;
+    unit.dataVal = UNIT_DATA[key];
+    unit.lastFired = 0;
+    unit.gridX = -1;
+    unit.gridY = -1;
 
-      // 스타일 적용 (색상 변수 적용 확인)
-      this.hoverText.setStyle({
-        fontFamily: "Cafe24ClassicType",
-        color: nameColor,
-        stroke: "#000000",
-        strokeThickness: 4,
-        fontSize: "18px",
-        fontWeight: "bold",
-        backgroundColor: "#000000cc",
-        padding: { x: 8, y: 5 },
+    const ownerPrefix = socket && socket.id ? socket.id : "guest";
+    unit.myUniqueId = `${ownerPrefix}_${Date.now()}_${Math.random()}`;
+    this.setupUnitEvents(unit);
+    this.units.add(unit);
+
+    // 멀티플레이라면 생성 정보 전송
+    if (this.isMultiplayer && socket && socket.connected) {
+      socket.emit("sync_action", {
+        room: this.myRoomName,
+        type: "place_unit",
+        payload: {
+          key: unit.unitKey,
+          tier: unit.dataVal.tier,
+          x: unit.x,
+          y: unit.y,
+          ownerId: socket.id,
+          uniqueId: unit.myUniqueId,
+        },
       });
+    }
+  }
 
-      this.hoverText.setPosition(unit.x, unit.y - 40);
-      this.hoverText.setVisible(true);
-      this.hoverText.setDepth(9999); // 제일 위에 보이게
-
-      // 3. 유닛 선택 효과 (살짝 어둡게 -> 밝게 변경)
-      // 기존 0xdddddd(회색) 대신 0xffffff(원색)에 투명도를 주거나 밝기를 조절
-      unit.setTint(0xcccccc);
-
-      // 4. 사거리 원 그리기 (색상 적용)
-      this.rangeGraphics.clear();
-      this.rangeGraphics.fillStyle(circleColor, 0.15);
-      this.rangeGraphics.lineStyle(2, circleColor, 0.8);
-      this.rangeGraphics.fillCircle(unit.x, unit.y, unit.dataVal.range);
-      this.rangeGraphics.strokeCircle(unit.x, unit.y, unit.dataVal.range);
-    });
-
-    // Pointer Out (마우스 뗐을 때)
+  // 유닛의 마우스 이벤트(툴팁, 색상, 사거리)를 설정하는 공통 함수
+  setupUnitEvents(unit) {
+    // 1. 마우스 올렸을 때 (Pointer Over)
     unit.on("pointerover", () => {
-      // 드래그 중일 땐 툴팁 표시 안 함
       if (unit.isDragging) return;
 
-      // 1. 티어별 색상 코드 정의
+      // 티어별 색상 설정
       let nameColor = "#ffffff";
       let circleColor = 0xffffff;
-
-      // 데이터가 없을 경우를 대비한 안전장치
-      if (!unit.dataVal) return;
 
       switch (unit.dataVal.tier) {
         case 1:
@@ -3012,12 +2978,12 @@ class GameScene extends Phaser.Scene {
           circleColor = 0xbdc3c7;
           break;
         case 2:
-          nameColor = "#3498db";
-          circleColor = 0x3498db;
-          break;
-        case 3:
           nameColor = "#2ecc71";
           circleColor = 0x2ecc71;
+          break;
+        case 3:
+          nameColor = "#3498db";
+          circleColor = 0x3498db;
           break;
         case 4:
           nameColor = "#9b59b6";
@@ -3031,37 +2997,28 @@ class GameScene extends Phaser.Scene {
           nameColor = "#e74c3c";
           circleColor = 0xe74c3c;
           break;
-        default:
-          nameColor = "#ffffff";
-          circleColor = 0xffffff;
-          break;
       }
 
-      // 2. 툴팁 텍스트 설정
       const tierStr = "★".repeat(unit.dataVal.tier);
       this.hoverText.setText(`${tierStr} ${unit.dataVal.name}`);
 
-      // 스타일 적용
       this.hoverText.setStyle({
         fontFamily: "Cafe24ClassicType",
         color: nameColor,
         stroke: "#000000",
         strokeThickness: 4,
         fontSize: "18px",
-        fontStyle: "bold",
+        fontWeight: "bold",
         backgroundColor: "#000000cc",
         padding: { x: 8, y: 5 },
       });
 
-      // 위치 잡기 (유닛 머리 위)
-      this.hoverText.setPosition(unit.x, unit.y - 50);
+      this.hoverText.setPosition(unit.x, unit.y - 40);
       this.hoverText.setVisible(true);
       this.hoverText.setDepth(9999);
-
-      // 3. 유닛 선택 효과
       unit.setTint(0xcccccc);
 
-      // 4. 사거리 원 그리기
+      // 사거리 원 그리기
       this.rangeGraphics.clear();
       this.rangeGraphics.fillStyle(circleColor, 0.15);
       this.rangeGraphics.lineStyle(2, circleColor, 0.8);
@@ -3069,8 +3026,11 @@ class GameScene extends Phaser.Scene {
       this.rangeGraphics.strokeCircle(unit.x, unit.y, unit.dataVal.range);
     });
 
-    this.gridState[gy][gx] = unit;
-    this.units.add(unit);
+    unit.on("pointerout", () => {
+      this.hoverText.setVisible(false);
+      unit.clearTint();
+      this.rangeGraphics.clear();
+    });
   }
 
   // 유닛 선택 시 하단 정보창에 색상 적용
@@ -3082,8 +3042,8 @@ class GameScene extends Phaser.Scene {
     this.btnSell.setVisible(true);
 
     // 2. 티어별 색상 코드 결정
-    let colorCode = "#ffffff"; // 기본 흰색
-    let hexColor = 0xffffff; // 사거리 표시용 hex 코드
+    let colorCode = "#ffffff";
+    let hexColor = 0xffffff;
 
     switch (unit.dataVal.tier) {
       case 1:
@@ -3091,12 +3051,12 @@ class GameScene extends Phaser.Scene {
         hexColor = 0xbdc3c7;
         break;
       case 2:
-        colorCode = "#3498db";
-        hexColor = 0x3498db;
-        break;
-      case 3:
         colorCode = "#2ecc71";
         hexColor = 0x2ecc71;
+        break;
+      case 3:
+        colorCode = "#3498db";
+        hexColor = 0x3498db;
         break;
       case 4:
         colorCode = "#9b59b6";
@@ -3255,8 +3215,9 @@ class GameScene extends Phaser.Scene {
     );
 
     if (distToCenter < this.mapRadius - 40) {
-      // 겹침 방지: 필드에 있는 다른 유닛들과 거리 체크
-      let isOverlapping = false;
+      let targetUnit = null;
+      let minDist = 40; // 겹침 판정 거리
+
       this.units.children.iterate((otherUnit) => {
         if (unit === otherUnit) return;
         if (!otherUnit.active) return;
@@ -3267,13 +3228,23 @@ class GameScene extends Phaser.Scene {
           otherUnit.x,
           otherUnit.y
         );
-        if (dist < 40) isOverlapping = true;
+        if (dist < minDist) {
+          targetUnit = otherUnit;
+          minDist = dist;
+        }
       });
 
-      if (isOverlapping) {
-        this.returnUnitToOriginalPos(unit);
-        this.showWarningText(unit.x, unit.y, "겹침 불가!");
-        return;
+      // 2. 겹치는 유닛이 있다면? -> 조합 시도!
+      if (targetUnit) {
+        const combined = this.tryCombine(unit, targetUnit);
+
+        if (combined) {
+          return;
+        } else {
+          this.returnUnitToOriginalPos(unit);
+          this.showWarningText(unit.x, unit.y, "겹침 불가!");
+          return;
+        }
       }
 
       // 기존 그리드 자리 비우기
@@ -3358,9 +3329,9 @@ class GameScene extends Phaser.Scene {
     if (targetUnit === null) {
       // (A) 진짜 빈칸이면 -> 이동
       if (unit.gridX !== -1) {
-        this.gridState[unit.gridY][unit.gridX] = null; // 옛날 자리 비움
+        this.gridState[unit.gridY][unit.gridX] = null;
       }
-      this.gridState[dropGY][dropGX] = unit; // 새 자리 차지
+      this.gridState[dropGY][dropGX] = unit;
 
       unit.gridX = dropGX;
       unit.gridY = dropGY;
@@ -3370,10 +3341,11 @@ class GameScene extends Phaser.Scene {
 
       this.selectUnit(unit);
     } else if (targetUnit !== unit) {
-      // (B) 다른 유닛이 있으면 -> 합치기 시도
-      this.tryCombine(unit, targetUnit);
+      const combined = this.tryCombine(unit, targetUnit);
+      if (!combined) {
+        this.returnUnitToOriginalPos(unit);
+      }
     } else {
-      // (C) 자기 자신 위면 -> 제자리 (Snap)
       this.returnUnitToOriginalPos(unit);
     }
   }
@@ -3495,32 +3467,41 @@ class GameScene extends Phaser.Scene {
     }
 
     if (success) {
-      // 툴팁 등 UI 정리
+      // UI 정리
       this.hoverText.setVisible(false);
-      // this.recipeText.setVisible(false);
       if (this.recipeContainer) this.recipeContainer.setVisible(false);
       this.rangeGraphics.clear();
 
-      // 기존 유닛 삭제 및 그리드 비우기
-      this.gridState[unitA.gridY][unitA.gridX] = null;
-      this.gridState[unitB.gridY][unitB.gridX] = null;
+      if (unitA.gridX >= 0 && unitA.gridY >= 0) {
+        this.gridState[unitA.gridY][unitA.gridX] = null;
+      }
+      if (unitB.gridX >= 0 && unitB.gridY >= 0) {
+        this.gridState[unitB.gridY][unitB.gridX] = null;
+      }
+      const targetX = unitB.x;
+      const targetY = unitB.y;
+      const isField = unitB.gridX === -1;
+
+      const targetGridX = unitB.gridX;
+      const targetGridY = unitB.gridY;
+
+      // 재료 삭제
       unitA.destroy();
       unitB.destroy();
 
-      // 새 유닛 생성
-      this.createUnitAt(unitB.gridX, unitB.gridY, newKey);
+      if (isField) {
+        this.createUnitDirectly(targetX, targetY, newKey);
+      } else {
+        this.createUnitAt(targetGridX, targetGridY, newKey);
+      }
 
-      // ========================================================
-      // [추가됨] 4티어 이상이면 조합 이펙트 발동!
-      // ========================================================
       const newData = UNIT_DATA[newKey];
       if (newData && newData.tier >= 4) {
         this.showCombinationEffect(newKey, newData.tier);
       }
+      return true;
     } else {
-      // 실패 시 원위치
-      unitA.x = unitA.startX;
-      unitA.y = unitA.startY;
+      return false;
     }
   }
 
@@ -3551,10 +3532,8 @@ class GameScene extends Phaser.Scene {
 
   // [유닛 타입에 따라 투사체 키(Key)와 애니메이션 결정]
   fireBullet(unit, target) {
-    let bulletKey = "bullet"; // 기본값 (흰 점)
+    let bulletKey = "bullet";
     let animKey = null;
-    // 빠른 총알이지만 천천히 회전하는 효과: bulletSpeed=1500, animFrameRate=8
-    // 느린 총알이지만 빠르게 깜빡이는 효과: bulletSpeed=500, animFrameRate=20
     let bulletSpeed = 500; // [공격모션이 날아가는 속도]
     let rotationOffset = 0;
     let animFrameRate = 10; // [애니메이션 기본 속도]
@@ -3567,17 +3546,11 @@ class GameScene extends Phaser.Scene {
       animKey = "anim_slayer_basic"; // 재생할 애니메이션 키
       animFrameRate = 10; // [애니메이션 속도(숫자가 클수록 빠르다!)]
       bulletSpeed = 500;
-
-      // [중요] 이미지가 세로로 길쭉한(32x175) 형태라면
-      // 날아가는 방향(오른쪽=0도)에 맞추기 위해 90도 회전이 필요할 수 있다.
-      // 만약 이미지가 위를 보고 그려졌다면 Math.PI / 2 (90도)를 더해야 합니다.
-      // rotationOffset = Math.PI / 2;
     } else if (type === "tanjiro_water") {
       bulletKey = "attack_tanjiro_water";
       animKey = "anim_tanjiro_water";
       animFrameRate = 15;
       bulletSpeed = 600;
-      // rotationOffset = Math.PI / 2; // 이미지가 세로면 필요, 가로면 0
     } else if (type === "zenitsu_thunder") {
       bulletKey = "attack_zenitsu_thunder";
       animKey = "anim_zenitsu_thunder";
@@ -4026,12 +3999,18 @@ class GameScene extends Phaser.Scene {
           this.gameClear();
           return;
         }
-
-        // 하드 모드는 조건문이 없으므로 그냥 계속 진행됨 (무한 라운드)
-        // ============================================================
       } else {
-        reward = 5 + Math.floor(this.round / 4);
-        if (reward > 10) reward = 10;
+        // [하드 모드 & 멀티 모드] 보상 상향
+        if (currentMode === "hard" || currentMode === "multi") {
+          reward = 7 + Math.floor(this.round / 4);
+          if (reward > 20) reward = 20;
+        }
+        // [노멀 모드]
+        else {
+          reward = 5 + Math.floor(this.round / 4);
+          // 노멀은 최대 10원으로 제한 유지
+          if (reward > 10) reward = 10;
+        }
       }
 
       this.gold += reward;
@@ -4053,24 +4032,20 @@ class GameScene extends Phaser.Scene {
       b.play({
         key: b.anims.currentAnim.key,
         frameRate: b.savedFrameRate || 10,
-        repeat: 0, // 1번만 재생
-        forceShift: true, // 강제로 처음 프레임부터 다시 시작
+        repeat: 0,
+        forceShift: true,
       });
 
-      // 애니메이션이 다 끝나면 그때 비로소 삭제
       b.once("animationcomplete", () => {
         b.destroy();
       });
     } else {
-      // 애니메이션이 없는 투사체(그냥 점 등)는 어쩔 수 없이 바로 삭제하거나,
-      // 약간의 딜레이 후 삭제
       this.time.delayedCall(50, () => b.destroy());
     }
   }
 
   // 골드/데미지 텍스트 이펙트 함수
   showGoldEffect(x, y, msg, color, fontSize) {
-    // 텍스트 생성
     const txt = this.add
       .text(x, y, msg, {
         fontFamily: "Cafe24ClassicType",

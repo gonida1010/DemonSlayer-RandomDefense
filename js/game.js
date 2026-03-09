@@ -111,7 +111,7 @@ async function fetchLeaderboardText(mode) {
     const q = query(
       collection(db, getScoreCollectionName(mode)),
       orderBy("round", "desc"),
-      limit(10)
+      limit(10),
     );
     const snapshot = await getDocs(q);
 
@@ -397,7 +397,7 @@ class BootScene extends Phaser.Scene {
       {
         frameWidth: 224 / 7,
         frameHeight: 32,
-      }
+      },
     );
 
     // 31. 이노스케(각성) (type: "inosuke_awake_beast")
@@ -527,7 +527,7 @@ class BootScene extends Phaser.Scene {
     this.load.spritesheet(
       "attack_rengoku_legend",
       "rengoku_legend_attack.png",
-      { frameWidth: 64, frameHeight: 64 }
+      { frameWidth: 64, frameHeight: 64 },
     );
 
     // 13. 오바나이&미츠리 (사랑과 뱀의 호흡)
@@ -543,7 +543,7 @@ class BootScene extends Phaser.Scene {
       {
         frameWidth: 64,
         frameHeight: 64,
-      }
+      },
     );
 
     // 15. 네즈코 (태양의 극복 - 붉은 태양)
@@ -725,7 +725,7 @@ class MenuScene extends Phaser.Scene {
         console.log("대기열 등록됨");
         this.modeRankTitle.setText("=== 매칭 대기 중 ===");
         this.leaderboardText.setText(
-          "다른 대원을 기다리고 있습니다...\n(잠시만 기다려주세요)"
+          "다른 대원을 기다리고 있습니다...\n(잠시만 기다려주세요)",
         );
       });
 
@@ -812,7 +812,7 @@ class MenuScene extends Phaser.Scene {
       } else {
         // 깃허브 페이지 등 서버가 없는 환경일 때
         alert(
-          "서버와 연결되어 있지 않습니다.\n싱글 모드(스토리/지옥)만 플레이 가능합니다."
+          "서버와 연결되어 있지 않습니다.\n싱글 모드(스토리/지옥)만 플레이 가능합니다.",
         );
       }
     } else {
@@ -858,7 +858,7 @@ class GameScene extends Phaser.Scene {
     this.isMultiplayer = !!this.myRoomName;
 
     console.log(
-      `게임 초기화: Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}`
+      `게임 초기화: Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}`,
     );
   }
 
@@ -891,7 +891,7 @@ class GameScene extends Phaser.Scene {
     this.bg.setDepth(-100);
 
     this.input.setDefaultCursor(
-      "url(assets/images/cursor.png), 14 0, pointer'"
+      "url(assets/images/cursor.png), 14 0, pointer'",
     );
 
     // 로드한 "basic_bullet_img"를 기반으로 애니메이션 생성
@@ -1682,7 +1682,7 @@ class GameScene extends Phaser.Scene {
       this.enemies,
       this.hitEnemy,
       null,
-      this
+      this,
     );
 
     // ============================================================
@@ -1738,7 +1738,7 @@ class GameScene extends Phaser.Scene {
     });
     // [스페이스바 단축키 등록]
     const spaceKey = this.input.keyboard.addKey(
-      Phaser.Input.Keyboard.KeyCodes.SPACE
+      Phaser.Input.Keyboard.KeyCodes.SPACE,
     );
     spaceKey.on("down", () => {
       if (this.isPaused || this.isGameOver) return;
@@ -1863,7 +1863,7 @@ class GameScene extends Phaser.Scene {
         this.cellSize / 2,
       this.gridSize * this.cellSize + 20,
       this.gridSize * this.cellSize + 20,
-      0x111111
+      0x111111,
     );
     for (let y = 0; y < this.gridSize; y++) {
       for (let x = 0; x < this.gridSize; x++) {
@@ -2867,7 +2867,7 @@ class GameScene extends Phaser.Scene {
     }
 
     const pool = Object.keys(UNIT_DATA).filter(
-      (k) => UNIT_DATA[k].tier === targetTier
+      (k) => UNIT_DATA[k].tier === targetTier,
     );
 
     const randomKey = Phaser.Utils.Array.GetRandom(pool);
@@ -2888,7 +2888,7 @@ class GameScene extends Phaser.Scene {
             color: "#ffff00",
             stroke: "#ff0000",
             strokeThickness: 2,
-          }
+          },
         )
         .setOrigin(0.5)
         .setDepth(300);
@@ -3085,7 +3085,7 @@ class GameScene extends Phaser.Scene {
 
     // 텍스트 내용 설정
     this.statText.setText(
-      `[${stars}${unit.dataVal.name}]   공격력: ${unit.dataVal.dmg}   공속: ${atkSpeedSec}s   사거리: ${unit.dataVal.range}`
+      `[${stars}${unit.dataVal.name}]   공격력: ${unit.dataVal.dmg}   공속: ${atkSpeedSec}s   사거리: ${unit.dataVal.range}`,
     );
 
     // 텍스트 스타일(색상) 적용
@@ -3101,7 +3101,7 @@ class GameScene extends Phaser.Scene {
     // 조합법 힌트 표시 (컬러 적용 버전)
     const myKey = unit.unitKey;
     const myRecipes = RECIPES.filter(
-      (r) => (r.a === myKey || r.b === myKey) && !r.hidden
+      (r) => (r.a === myKey || r.b === myKey) && !r.hidden,
     );
 
     // 1) 기존 내용 싹 비우기
@@ -3211,7 +3211,7 @@ class GameScene extends Phaser.Scene {
       unit.x,
       unit.y,
       this.mapCenter.x,
-      this.mapCenter.y
+      this.mapCenter.y,
     );
 
     if (distToCenter < this.mapRadius - 40) {
@@ -3226,7 +3226,7 @@ class GameScene extends Phaser.Scene {
           unit.x,
           unit.y,
           otherUnit.x,
-          otherUnit.y
+          otherUnit.y,
         );
         if (dist < minDist) {
           targetUnit = otherUnit;
@@ -3279,10 +3279,10 @@ class GameScene extends Phaser.Scene {
 
     // 드롭된 위치의 그리드 좌표 계산
     const dropGX = Math.floor(
-      (unit.x - this.gridOffsetX + this.cellSize / 2) / this.cellSize
+      (unit.x - this.gridOffsetX + this.cellSize / 2) / this.cellSize,
     );
     const dropGY = Math.floor(
-      (unit.y - this.gridOffsetY + this.cellSize / 2) / this.cellSize
+      (unit.y - this.gridOffsetY + this.cellSize / 2) / this.cellSize,
     );
 
     // 그리드 밖으로 나갔으면 원위치
@@ -3314,7 +3314,7 @@ class GameScene extends Phaser.Scene {
         .getChildren()
         .find(
           (u) =>
-            u !== unit && u.active && u.gridX === dropGX && u.gridY === dropGY
+            u !== unit && u.active && u.gridX === dropGX && u.gridY === dropGY,
         );
 
       if (ghostUnit) {
@@ -3458,7 +3458,7 @@ class GameScene extends Phaser.Scene {
     const recipe = RECIPES.find(
       (r) =>
         (r.a === unitA.unitKey && r.b === unitB.unitKey) ||
-        (r.b === unitA.unitKey && r.a === unitB.unitKey)
+        (r.b === unitA.unitKey && r.a === unitB.unitKey),
     );
 
     if (recipe) {
@@ -4176,7 +4176,7 @@ class GameScene extends Phaser.Scene {
 
     if (this.txtEnemyCount) {
       this.txtEnemyCount.setText(
-        `남은 혈귀: ${currentEnemies} / ${maxEnemies}`
+        `남은 혈귀: ${currentEnemies} / ${maxEnemies}`,
       );
       if (currentEnemies >= maxEnemies * 0.8) {
         this.txtEnemyCount.setColor("#ff0000");
@@ -4472,7 +4472,7 @@ class GameScene extends Phaser.Scene {
 
         // 저장
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("시간 초과")), 3000)
+          setTimeout(() => reject(new Error("시간 초과")), 3000),
         );
 
         await Promise.race([
@@ -4493,6 +4493,181 @@ class GameScene extends Phaser.Scene {
       }
     }
   }
+
+  // =================================================================
+  // [RL Bridge] 강화학습 브릿지 메서드
+  // =================================================================
+
+  /** 현재 게임 상태를 JSON으로 직렬화 */
+  getGameState() {
+    const gridState = this.gridState.flat().map((cell) => {
+      if (!cell || !cell.active) return null;
+      return { key: cell.unitKey, tier: cell.dataVal.tier };
+    });
+
+    const fieldUnits = [];
+    this.units.children.iterate((u) => {
+      if (u && u.active && u.gridX === -1) {
+        fieldUnits.push({
+          key: u.unitKey,
+          tier: u.dataVal.tier,
+          x: u.x,
+          y: u.y,
+          dps: (u.dataVal.dmg * 1000) / u.dataVal.speed,
+        });
+      }
+    });
+
+    const enemies = [];
+    this.enemies.children.iterate((e) => {
+      if (e && e.active) {
+        enemies.push({
+          hp: e.hp,
+          maxHp: e.maxHp,
+          isBoss: !!e.isBoss,
+        });
+      }
+    });
+
+    const totalFieldDps = fieldUnits.reduce((sum, u) => sum + u.dps, 0);
+
+    return {
+      round: this.round,
+      gold: this.gold,
+      timeRemaining: this.currentTime,
+      gridState: gridState,
+      fieldUnits: fieldUnits,
+      enemies: enemies,
+      enemyCount: enemies.length,
+      maxEnemies: GAME_CONFIG.maxEnemies,
+      totalFieldDps: totalFieldDps,
+      isGameOver: this.isGameOver,
+      isPaused: this.isPaused,
+    };
+  }
+
+  /** RL 행동 실행 */
+  executeRLAction(action) {
+    if (this.isGameOver || this.isPaused) return;
+
+    const { type, params } = action;
+
+    switch (type) {
+      case "summon":
+        this.summonUnit();
+        break;
+
+      case "place": {
+        // params.unitKey - 배치할 유닛 키
+        const unitKey = params?.unitKey;
+        if (!unitKey) break;
+        // 그리드에서 해당 유닛 찾기
+        for (let y = 0; y < this.gridSize; y++) {
+          for (let x = 0; x < this.gridSize; x++) {
+            const cell = this.gridState[y][x];
+            if (cell && cell.unitKey === unitKey) {
+              // 필드 중앙 근처에 배치
+              const angle = Math.random() * Math.PI * 2;
+              const radius = 100 + Math.random() * 100;
+              const fx = this.mapCenter.x + Math.cos(angle) * radius;
+              const fy = this.mapCenter.y + Math.sin(angle) * radius;
+
+              this.gridState[y][x] = null;
+              cell.gridX = -1;
+              cell.gridY = -1;
+              cell.x = fx;
+              cell.y = fy;
+              return;
+            }
+          }
+        }
+        break;
+      }
+
+      case "sell": {
+        const sellKey = params?.unitKey;
+        if (!sellKey) break;
+        for (let y = 0; y < this.gridSize; y++) {
+          for (let x = 0; x < this.gridSize; x++) {
+            const cell = this.gridState[y][x];
+            if (cell && cell.unitKey === sellKey) {
+              const sellPrice = cell.dataVal.tier * 50;
+              this.gold += sellPrice;
+              this.txtGold.setText(`GOLD: ${this.gold}`);
+              this.gridState[y][x] = null;
+              cell.destroy();
+              return;
+            }
+          }
+        }
+        break;
+      }
+
+      case "combine": {
+        // params.a, params.b - 조합할 두 유닛 키
+        const keyA = params?.a;
+        const keyB = params?.b;
+        if (!keyA || !keyB) break;
+        let unitA = null;
+        let unitB = null;
+        // 그리드에서 찾기
+        for (let y = 0; y < this.gridSize; y++) {
+          for (let x = 0; x < this.gridSize; x++) {
+            const cell = this.gridState[y][x];
+            if (!cell) continue;
+            if (!unitA && cell.unitKey === keyA) {
+              unitA = cell;
+            } else if (!unitB && cell.unitKey === keyB) {
+              unitB = cell;
+            }
+          }
+        }
+        if (unitA && unitB) {
+          this.tryCombine(unitA, unitB);
+        }
+        break;
+      }
+
+      case "wait":
+      default:
+        break;
+    }
+  }
+
+  /** RL 모드 초기화: 소켓 이벤트 등록 */
+  initRLMode() {
+    if (!socket) return;
+
+    socket.emit("rl_game_ready");
+    console.log("🤖 RL 모드 활성화");
+
+    // RL 행동 수신 → 실행 → 상태 반환
+    socket.on("rl_execute_action", (action) => {
+      this.executeRLAction(action);
+
+      // 실행 후 현재 상태 전송
+      const state = this.getGameState();
+      socket.emit("rl_state", state);
+    });
+
+    // 매 프레임마다 상태 전송 (선택적 - 주기적 동기화)
+    this.time.addEvent({
+      delay: 500,
+      callback: () => {
+        if (socket && socket.connected) {
+          socket.emit("rl_state", this.getGameState());
+        }
+      },
+      loop: true,
+    });
+  }
+}
+
+// RL 모드 감지 (URL 파라미터: ?rl=true)
+const urlParams = new URLSearchParams(window.location.search);
+const isRLMode = urlParams.get("rl") === "true";
+if (isRLMode) {
+  console.log("🤖 RL 모드 감지됨");
 }
 
 const config = {
@@ -4529,6 +4704,33 @@ async function bootstrap() {
   await loadDataForMode("normal");
 
   game = new Phaser.Game(config);
+
+  // RL 모드일 때 자동 시작
+  if (isRLMode) {
+    currentPlayerName = "RL_Agent";
+    currentMode = "normal";
+    overlay.style.display = "none";
+
+    // 게임이 준비되면 자동 시작
+    game.events.once("ready", () => {
+      game.scene.start("MenuScene");
+      // MenuScene을 바로 건너뛰고 GameScene으로
+      setTimeout(() => {
+        game.scene.stop("MenuScene");
+        game.scene.start("GameScene");
+        // GameScene이 생성된 후 RL 모드 초기화
+        setTimeout(() => {
+          const gameScene = game.scene.getScene("GameScene");
+          if (gameScene) {
+            gameScene.initRLMode();
+            // RL 모드에서는 최고 속도로 실행
+            gameScene.applySpeedChange(2.0);
+          }
+        }, 1000);
+      }, 500);
+    });
+    return;
+  }
 
   // ★ HTML 버튼 클릭 이벤트 (이름 입력 -> 메뉴 이동) ★
   if (startBtn) {

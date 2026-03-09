@@ -1,0 +1,52 @@
+# ========================
+# Node.js
+# ========================
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+**/.venv/
+**/venv/
+**/env/
+
+# RL training outputs
+python/models/
+python/logs/
+python/tensorboard_logs/
+*.zip
+
+# ========================
+# IDE / Editor
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========================
+# OS
+# ========================
+*.tmp
+*.bak
+*.log
+
+# ========================
+# Test artifacts
+# ========================
+python/test_logic.py

@@ -6,10 +6,17 @@ const io = require("socket.io")(http);
 const path = require("path");
 
 app.use(express.static(__dirname));
+app.use(express.json());
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
+
+// ===============================================================
+// [RL Bridge] 강화학습 브릿지
+// ===============================================================
+let rlSocket = null; // RL 클라이언트 소켓
+let gameSocket = null; // 게임 클라이언트 소켓 (RL 모드)
 
 let waitingPlayer = null;
 
@@ -74,6 +81,48 @@ io.on("connection", (socket) => {
     }
     if (socket.currentRoom) {
       socket.to(socket.currentRoom).emit("partner_disconnected");
+    }
+
+    // RL 클라이언트 연결 해제 처리
+    if (socket === rlSocket) {
+      console.log("🤖 RL 클라이언트 연결 해제");
+      rlSocket = null;
+    }
+    if (socket === gameSocket) {
+      gameSocket = null;
+    }
+  });
+
+  // ===============================================================
+  // [RL Bridge] 강화학습 소켓 이벤트
+  // ===============================================================
+
+  // RL 클라이언트 연결 (Python에서 접속)
+  socket.on("rl_connect", (data) => {
+    console.log("🤖 RL 클라이언트 연결!");
+    rlSocket = socket;
+    // 게임 브라우저에 RL 모드 시작 알림
+    io.emit("rl_mode_start", { speed: data?.speed || 10 });
+  });
+
+  // RL 행동 전송 (Python → 게임)
+  socket.on("rl_action", (action) => {
+    io.emit("rl_execute_action", action);
+  });
+
+  // 게임 상태 전송 (게임 → Python)
+  socket.on("rl_state", (state) => {
+    if (rlSocket) {
+      rlSocket.emit("rl_state", state);
+    }
+  });
+
+  // 게임 브라우저 등록
+  socket.on("rl_game_ready", () => {
+    console.log("🎮 RL 게임 브라우저 준비 완료");
+    gameSocket = socket;
+    if (rlSocket) {
+      rlSocket.emit("rl_game_ready");
     }
   });
 });

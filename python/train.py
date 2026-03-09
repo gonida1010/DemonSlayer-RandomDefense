@@ -5,8 +5,8 @@ MaskablePPO (sb3-contrib)를 사용한 강화학습 훈련.
 목표: 스토리 모드 90라운드 클리어.
 
 사용법:
-  python train.py                    # 기본 학습 시작
-  python train.py --timesteps 2000000  # 타임스텝 지정
+  python train.py                      # config.py 설정으로 즉시 학습
+  python train.py --eval model.zip     # 모델 평가만 실행
   python train.py --resume model.zip   # 이전 모델 이어 학습
 """
 import os
@@ -23,6 +23,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 from game_env import DemonSlayerEnv
+import config as cfg
 
 
 # =====================================================================
@@ -85,7 +86,7 @@ class GameMetricsCallback(BaseCallback):
                         self.logger.record('game/best_avg_round', self.best_avg_round)
 
                 # 주기적 출력
-                if self.episode_count % 50 == 0:
+                if self.episode_count % cfg.PRINT_INTERVAL == 0:
                     recent = self.episode_rounds[-50:]
                     print(f"  [Episode {self.episode_count}] "
                           f"Avg Round: {np.mean(recent):.1f} | "
@@ -98,47 +99,70 @@ class GameMetricsCallback(BaseCallback):
 # =====================================================================
 # 학습 설정 및 실행
 # =====================================================================
+def _resolve_device():
+    """GPU 사용 가능 여부 확인 후 디바이스 결정"""
+    import torch
+    device = cfg.DEVICE
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        return device, f"{gpu_name} ({vram:.1f} GB)"
+    return "cpu", "CPU"
+
+
 def train(args):
+    timesteps = args.timesteps or cfg.TOTAL_TIMESTEPS
+    n_envs = args.n_envs or cfg.N_ENVS
+    lr = args.lr or cfg.LEARNING_RATE
+    save_dir = args.save_dir or cfg.SAVE_DIR
+    log_dir = args.log_dir or cfg.LOG_DIR
+    device, device_info = _resolve_device()
+
     print("=" * 60)
     print("  귀멸의 칼날 랜덤 디펜스 - RL 학습")
     print("=" * 60)
-    print(f"  총 타임스텝: {args.timesteps:,}")
-    print(f"  병렬 환경 수: {args.n_envs}")
-    print(f"  저장 경로: {args.save_dir}")
+    print(f"  디바이스: {device_info}")
+    print(f"  총 타임스텝: {timesteps:,}")
+    print(f"  병렬 환경 수: {n_envs}")
+    print(f"  학습률: {lr}")
+    print(f"  저장 경로: {save_dir}")
     print("=" * 60)
 
-    os.makedirs(args.save_dir, exist_ok=True)
-    os.makedirs(args.log_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
 
     # 환경 생성 (병렬)
-    if args.n_envs > 1:
-        env = SubprocVecEnv([make_env(seed=i) for i in range(args.n_envs)])
+    if n_envs > 1:
+        env = SubprocVecEnv([make_env(seed=i) for i in range(n_envs)])
     else:
         env = DummyVecEnv([make_env(seed=0)])
 
     # 모델 생성 또는 로드
     if args.resume:
         print(f"기존 모델 로드: {args.resume}")
-        model = MaskablePPO.load(args.resume, env=env)
-        model.learning_rate = args.lr
+        model = MaskablePPO.load(args.resume, env=env, device=device)
+        model.learning_rate = lr
     else:
         model = MaskablePPO(
             "MlpPolicy",
             env,
-            learning_rate=args.lr,
-            n_steps=2048,               # 스텝 수 / 환경
-            batch_size=256,             # 미니배치 크기
-            n_epochs=10,                # 에포크 수
-            gamma=0.998,                # 할인 계수 (장기 보상)
-            gae_lambda=0.95,            # GAE 람다
-            clip_range=0.2,             # PPO 클립 범위
-            ent_coef=0.01,              # 엔트로피 계수 (탐색 유도)
-            vf_coef=0.5,                # 가치 함수 계수
-            max_grad_norm=0.5,          # 그래디언트 클리핑
+            learning_rate=lr,
+            n_steps=cfg.N_STEPS,
+            batch_size=cfg.BATCH_SIZE,
+            n_epochs=cfg.N_EPOCHS,
+            gamma=cfg.GAMMA,
+            gae_lambda=cfg.GAE_LAMBDA,
+            clip_range=cfg.CLIP_RANGE,
+            ent_coef=cfg.ENT_COEF,
+            vf_coef=cfg.VF_COEF,
+            max_grad_norm=cfg.MAX_GRAD_NORM,
             verbose=1,
-            tensorboard_log=args.log_dir,
+            device=device,
+            tensorboard_log=log_dir,
             policy_kwargs={
-                'net_arch': dict(pi=[256, 256], vf=[256, 256]),
+                'net_arch': dict(pi=cfg.NET_ARCH_PI, vf=cfg.NET_ARCH_VF),
             },
         )
 
@@ -146,22 +170,32 @@ def train(args):
     callbacks = CallbackList([
         GameMetricsCallback(verbose=1),
         CheckpointCallback(
-            save_freq=max(50000 // args.n_envs, 1000),
-            save_path=args.save_dir,
+            save_freq=max(cfg.CHECKPOINT_FREQ // n_envs, 1000),
+            save_path=save_dir,
             name_prefix='demon_slayer_rl',
         ),
     ])
 
+    # progress_bar: tqdm + rich 설치 여부에 따라 자동 결정
+    use_progress_bar = cfg.PROGRESS_BAR
+    if use_progress_bar:
+        try:
+            import tqdm  # noqa: F401
+            import rich  # noqa: F401
+        except ImportError:
+            print("[!] tqdm/rich 미설치 → 진행률 바 비활성화 (pip install tqdm rich)")
+            use_progress_bar = False
+
     # 학습 시작
     print("\n학습 시작...")
     model.learn(
-        total_timesteps=args.timesteps,
+        total_timesteps=timesteps,
         callback=callbacks,
-        progress_bar=True,
+        progress_bar=use_progress_bar,
     )
 
     # 최종 모델 저장
-    final_path = os.path.join(args.save_dir, 'demon_slayer_final')
+    final_path = os.path.join(save_dir, 'demon_slayer_final')
     model.save(final_path)
     print(f"\n최종 모델 저장: {final_path}.zip")
 
@@ -223,49 +257,50 @@ def evaluate(model_path, n_episodes=20):
 # =====================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description='귀멸의 칼날 랜덤 디펜스 RL 학습'
+        description='귀멸의 칼날 랜덤 디펜스 RL 학습 (설정: config.py)'
     )
     parser.add_argument(
-        '--timesteps', type=int, default=5_000_000,
-        help='총 학습 타임스텝 (기본: 5,000,000)'
+        '--timesteps', type=int, default=None,
+        help=f'총 학습 타임스텝 (config 기본: {cfg.TOTAL_TIMESTEPS:,})'
     )
     parser.add_argument(
-        '--n-envs', type=int, default=4,
-        help='병렬 환경 수 (기본: 4)'
+        '--n-envs', type=int, default=None,
+        help=f'병렬 환경 수 (config 기본: {cfg.N_ENVS})'
     )
     parser.add_argument(
-        '--lr', type=float, default=3e-4,
-        help='학습률 (기본: 3e-4)'
+        '--lr', type=float, default=None,
+        help=f'학습률 (config 기본: {cfg.LEARNING_RATE})'
     )
     parser.add_argument(
         '--resume', type=str, default=None,
         help='이어서 학습할 모델 경로 (.zip)'
     )
     parser.add_argument(
-        '--save-dir', type=str, default='./models',
-        help='모델 저장 디렉토리 (기본: ./models)'
+        '--save-dir', type=str, default=None,
+        help=f'모델 저장 디렉토리 (config 기본: {cfg.SAVE_DIR})'
     )
     parser.add_argument(
-        '--log-dir', type=str, default='./tb_logs',
-        help='TensorBoard 로그 디렉토리 (기본: ./tb_logs)'
+        '--log-dir', type=str, default=None,
+        help=f'TensorBoard 로그 디렉토리 (config 기본: {cfg.LOG_DIR})'
     )
     parser.add_argument(
         '--eval', type=str, default=None,
         help='평가할 모델 경로 (학습 건너뛰고 평가만 실행)'
     )
     parser.add_argument(
-        '--eval-episodes', type=int, default=20,
-        help='평가 에피소드 수 (기본: 20)'
+        '--eval-episodes', type=int, default=None,
+        help=f'평가 에피소드 수 (config 기본: {cfg.EVAL_EPISODES})'
     )
 
     args = parser.parse_args()
+    eval_episodes = args.eval_episodes or cfg.EVAL_EPISODES
 
     if args.eval:
-        evaluate(args.eval, n_episodes=args.eval_episodes)
+        evaluate(args.eval, n_episodes=eval_episodes)
     else:
         model_path = train(args)
         print("\n학습 완료. 평가 시작...")
-        evaluate(model_path, n_episodes=args.eval_episodes)
+        evaluate(model_path, n_episodes=eval_episodes)
 
 
 if __name__ == '__main__':

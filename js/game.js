@@ -4531,6 +4531,29 @@ class GameScene extends Phaser.Scene {
 
     const totalFieldDps = fieldUnits.reduce((sum, u) => sum + u.dps, 0);
 
+    // 그리드 유닛 카운트 (조합 가능 수 계산용)
+    const gridCounts = {};
+    for (const slot of gridState) {
+      if (slot && slot.key) {
+        gridCounts[slot.key] = (gridCounts[slot.key] || 0) + 1;
+      }
+    }
+
+    // 유효 조합 수 계산
+    let validCombines = 0;
+    if (typeof RECIPES !== "undefined") {
+      for (const recipe of RECIPES) {
+        const a = recipe.a,
+          b = recipe.b;
+        if (a === b) {
+          if ((gridCounts[a] || 0) >= 2) validCombines++;
+        } else {
+          if ((gridCounts[a] || 0) >= 1 && (gridCounts[b] || 0) >= 1)
+            validCombines++;
+        }
+      }
+    }
+
     return {
       round: this.round,
       gold: this.gold,
@@ -4541,6 +4564,7 @@ class GameScene extends Phaser.Scene {
       enemyCount: enemies.length,
       maxEnemies: GAME_CONFIG.maxEnemies,
       totalFieldDps: totalFieldDps,
+      validCombines: validCombines,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
     };
@@ -4551,32 +4575,45 @@ class GameScene extends Phaser.Scene {
     if (this.isGameOver || this.isPaused) return;
 
     const { type, params } = action;
+    let actionDesc = type;
 
     switch (type) {
       case "summon":
         this.summonUnit();
+        actionDesc = `SUMMON (gold: ${this.gold})`;
         break;
 
       case "place": {
-        // params.unitKey - 배치할 유닛 키
         const unitKey = params?.unitKey;
         if (!unitKey) break;
-        // 그리드에서 해당 유닛 찾기
         for (let y = 0; y < this.gridSize; y++) {
           for (let x = 0; x < this.gridSize; x++) {
             const cell = this.gridState[y][x];
-            if (cell && cell.unitKey === unitKey) {
-              // 필드 중앙 근처에 배치
-              const angle = Math.random() * Math.PI * 2;
-              const radius = 100 + Math.random() * 100;
-              const fx = this.mapCenter.x + Math.cos(angle) * radius;
-              const fy = this.mapCenter.y + Math.sin(angle) * radius;
-
+            if (cell && cell.active && cell.unitKey === unitKey) {
+              // 그리드에서 제거
               this.gridState[y][x] = null;
+
+              // 사거리 기반 최적 배치: 적 궤도(280px)에서 사거리만큼 안쪽
+              const unitRange = cell.dataVal.range || 100;
+              const orbitR = this.mapRadius - 20; // 280: 적 이동 궤도
+              // 사거리가 긴 유닛 → 중앙 쪽, 짧은 유닛 → 궤도 근처
+              const optimalR = Math.max(40, orbitR - unitRange * 0.7);
+              const jitter = (Math.random() - 0.5) * 30; // ±15px 흔들림
+              const placeDist = Math.max(
+                40,
+                Math.min(optimalR + jitter, orbitR - 40),
+              );
+              const angle = Math.random() * Math.PI * 2;
+              const fx = this.mapCenter.x + Math.cos(angle) * placeDist;
+              const fy = this.mapCenter.y + Math.sin(angle) * placeDist;
+
+              // gridX = -1 로 설정해야 필드 유닛으로 인식됨 (공격 가능)
               cell.gridX = -1;
               cell.gridY = -1;
               cell.x = fx;
               cell.y = fy;
+
+              actionDesc = `PLACE ${unitKey}(R${unitRange}) → r=${Math.round(placeDist)}`;
               return;
             }
           }
@@ -4590,12 +4627,13 @@ class GameScene extends Phaser.Scene {
         for (let y = 0; y < this.gridSize; y++) {
           for (let x = 0; x < this.gridSize; x++) {
             const cell = this.gridState[y][x];
-            if (cell && cell.unitKey === sellKey) {
+            if (cell && cell.active && cell.unitKey === sellKey) {
               const sellPrice = cell.dataVal.tier * 50;
               this.gold += sellPrice;
               this.txtGold.setText(`GOLD: ${this.gold}`);
               this.gridState[y][x] = null;
               cell.destroy();
+              actionDesc = `SELL ${sellKey} (+${sellPrice}g)`;
               return;
             }
           }
@@ -4604,17 +4642,15 @@ class GameScene extends Phaser.Scene {
       }
 
       case "combine": {
-        // params.a, params.b - 조합할 두 유닛 키
         const keyA = params?.a;
         const keyB = params?.b;
         if (!keyA || !keyB) break;
         let unitA = null;
         let unitB = null;
-        // 그리드에서 찾기
         for (let y = 0; y < this.gridSize; y++) {
           for (let x = 0; x < this.gridSize; x++) {
             const cell = this.gridState[y][x];
-            if (!cell) continue;
+            if (!cell || !cell.active) continue;
             if (!unitA && cell.unitKey === keyA) {
               unitA = cell;
             } else if (!unitB && cell.unitKey === keyB) {
@@ -4624,22 +4660,76 @@ class GameScene extends Phaser.Scene {
         }
         if (unitA && unitB) {
           this.tryCombine(unitA, unitB);
+          actionDesc = `COMBINE ${keyA} + ${keyB}`;
         }
         break;
       }
 
       case "wait":
       default:
+        actionDesc = "WAIT";
         break;
+    }
+
+    // RL 오버레이 업데이트
+    if (this.rlOverlay) {
+      this.rlOverlay.lastAction = actionDesc;
+      this.rlOverlay.actionCount = (this.rlOverlay.actionCount || 0) + 1;
     }
   }
 
-  /** RL 모드 초기화: 소켓 이벤트 등록 */
+  /** RL 모드 초기화: 소켓 이벤트 등록 + 시각적 오버레이 */
   initRLMode() {
     if (!socket) return;
 
     socket.emit("rl_game_ready");
     console.log("🤖 RL 모드 활성화");
+
+    // RL 시각 오버레이 생성
+    this.rlOverlay = {
+      lastAction: "WAIT",
+      actionCount: 0,
+    };
+
+    const overlayX = 20;
+    const overlayY = 10;
+    const panelWidth = 320;
+    const panelHeight = 140;
+
+    // 반투명 배경 패널
+    this.rlPanel = this.add
+      .rectangle(
+        overlayX + panelWidth / 2,
+        overlayY + panelHeight / 2,
+        panelWidth,
+        panelHeight,
+        0x000000,
+        0.7,
+      )
+      .setDepth(9999)
+      .setScrollFactor(0);
+
+    // 제목
+    this.rlTitle = this.add
+      .text(overlayX + 10, overlayY + 8, "🤖 AI AGENT", {
+        fontSize: "16px",
+        fontFamily: "monospace",
+        color: "#00ff88",
+        fontStyle: "bold",
+      })
+      .setDepth(10000)
+      .setScrollFactor(0);
+
+    // 상태 텍스트
+    this.rlStatusText = this.add
+      .text(overlayX + 10, overlayY + 32, "⏳ Python 연결 대기중...", {
+        fontSize: "13px",
+        fontFamily: "monospace",
+        color: "#ffffff",
+        lineSpacing: 4,
+      })
+      .setDepth(10000)
+      .setScrollFactor(0);
 
     // RL 행동 수신 → 실행 → 상태 반환
     socket.on("rl_execute_action", (action) => {
@@ -4650,15 +4740,54 @@ class GameScene extends Phaser.Scene {
       socket.emit("rl_state", state);
     });
 
-    // 매 프레임마다 상태 전송 (선택적 - 주기적 동기화)
+    // 매 500ms마다 상태 전송 + 오버레이 업데이트
     this.time.addEvent({
       delay: 500,
       callback: () => {
         if (socket && socket.connected) {
           socket.emit("rl_state", this.getGameState());
         }
+
+        // 오버레이 업데이트
+        if (this.rlOverlay && this.rlStatusText) {
+          const fieldCount = this.units
+            ? this.units.getChildren().filter((u) => u.active && u.gridX === -1)
+                .length
+            : 0;
+
+          const gridFilled = this.gridState
+            ? this.gridState.flat().filter((c) => c && c.active).length
+            : 0;
+
+          const fieldDps = this.units
+            ? this.units
+                .getChildren()
+                .filter((u) => u.active && u.gridX === -1)
+                .reduce(
+                  (sum, u) => sum + (u.dataVal.dmg * 1000) / u.dataVal.speed,
+                  0,
+                )
+            : 0;
+
+          const lines = [
+            `Action: ${this.rlOverlay.lastAction}`,
+            `Steps: ${this.rlOverlay.actionCount}  |  Round: ${this.round || 0}`,
+            `Field: ${fieldCount} units  |  Grid: ${gridFilled}/36`,
+            `DPS: ${fieldDps.toLocaleString("en-US", { maximumFractionDigits: 0 })}  |  Gold: ${this.gold || 0}`,
+            `Enemies: ${this.enemies ? this.enemies.countActive() : 0}`,
+          ];
+          this.rlStatusText.setText(lines.join("\n"));
+        }
       },
       loop: true,
+    });
+
+    // Python 연결 시 상태 변경
+    socket.on("rl_mode_start", () => {
+      if (this.rlStatusText) {
+        this.rlTitle.setText("🤖 AI AGENT ● LIVE");
+        this.rlTitle.setColor("#00ff00");
+      }
     });
   }
 }

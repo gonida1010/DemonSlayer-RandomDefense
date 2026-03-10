@@ -112,6 +112,25 @@ def _resolve_device():
     return "cpu", "CPU"
 
 
+def _find_latest_checkpoint(save_dir):
+    """저장 디렉토리에서 가장 최신(스텝 수 높은) 체크포인트를 자동 탐색"""
+    import glob, re
+    pattern = os.path.join(save_dir, 'demon_slayer_rl_*_steps.zip')
+    files = glob.glob(pattern)
+    if not files:
+        # final 모델도 확인
+        final = os.path.join(save_dir, 'demon_slayer_final.zip')
+        if os.path.exists(final):
+            return final
+        return None
+    # 파일명에서 스텝 수 추출 후 최대값 선택
+    def extract_steps(f):
+        m = re.search(r'_(\d+)_steps\.zip$', f)
+        return int(m.group(1)) if m else 0
+    latest = max(files, key=extract_steps)
+    return latest
+
+
 def train(args):
     timesteps = args.timesteps or cfg.TOTAL_TIMESTEPS
     n_envs = args.n_envs or cfg.N_ENVS
@@ -140,9 +159,16 @@ def train(args):
         env = DummyVecEnv([make_env(seed=0)])
 
     # 모델 생성 또는 로드
-    if args.resume:
-        print(f"기존 모델 로드: {args.resume}")
-        model = MaskablePPO.load(args.resume, env=env, device=device)
+    resume_path = args.resume
+    if resume_path is not None:
+        # --resume만 입력 시 (경로 없음) → 최신 체크포인트 자동 탐색
+        if resume_path == '__latest__':
+            resume_path = _find_latest_checkpoint(save_dir)
+            if resume_path is None:
+                print("[!] 저장된 체크포인트 없음 → 새로 학습 시작")
+        if resume_path:
+            print(f"기존 모델 로드: {resume_path}")
+            model = MaskablePPO.load(resume_path, env=env, device=device)
         model.learning_rate = lr
     else:
         model = MaskablePPO(
@@ -272,8 +298,8 @@ def main():
         help=f'학습률 (config 기본: {cfg.LEARNING_RATE})'
     )
     parser.add_argument(
-        '--resume', type=str, default=None,
-        help='이어서 학습할 모델 경로 (.zip)'
+        '--resume', nargs='?', const='__latest__', default=None,
+        help='이어서 학습 (경로 생략 시 최신 체크포인트 자동 탐색)'
     )
     parser.add_argument(
         '--save-dir', type=str, default=None,

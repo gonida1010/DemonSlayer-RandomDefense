@@ -86,12 +86,14 @@
  ┃ ┣ 📜 data.hard.js        # 지옥 모드 밸런스 데이터
  ┃ ┗ 📜 data.multi.js       # 협동 모드 밸런스 데이터
  ┣ 📂 python/               # 🤖 강화학습 모듈
- ┃ ┣ 📜 game_data.py        # JS 게임 데이터의 Python 미러 (유닛, 레시피, HP 공식)
- ┃ ┣ 📜 game_env.py         # Gymnasium 환경 (DemonSlayerDefense-v0)
+ ┃ ┣ 📜 game_data.py        # JS 게임 데이터의 Python 미러 (유닛, 레시피, 사거리, HP 공식)
+ ┃ ┣ 📜 game_env.py         # Gymnasium 환경 (사거리 기반 DPS 모델 포함)
+ ┃ ┣ 📜 config.py           # 학습 하이퍼파라미터 설정
  ┃ ┣ 📜 train.py            # MaskablePPO 학습 스크립트
- ┃ ┣ 📜 rl_bridge.py        # 학습 모델 → 실제 게임 WebSocket 연결
+ ┃ ┣ 📜 rl_bridge.py        # 학습 모델 → 실제 게임 WebSocket 연결 + 시각적 테스트
  ┃ ┗ 📜 requirements.txt    # Python 의존성
  ┣ 📜 server.js             # Express + Socket.IO 서버 (멀티/RL 지원)
+ ┣ 📜 package.json          # Node.js 의존성
  ┣ 📜 index.html            # 게임 진입점
  ┗ 📜 .gitignore
 ```
@@ -107,8 +109,9 @@
 │  Python 환경     │  학습    │  MaskablePPO       │
 │  (game_env.py)  │◄───────►│  (train.py)        │
 │  - 170 actions  │         │  - lr: 3e-4        │
-│  - 67-dim obs   │         │  - net: [256, 256] │
+│  - 67-dim obs   │         │  - net: [512,512,256]│
 │  - action mask  │         │  - gamma: 0.998    │
+│  - range DPS    │         │  - ent_coef: 0.03  │
 └─────────────────┘         └───────────────────┘
                                      │
                               학습된 모델 (.zip)
@@ -117,26 +120,25 @@
 ┌─────────────────┐  WebSocket  ┌───────────────────┐
 │  브라우저 게임    │◄──────────►│  rl_bridge.py      │
 │  (?rl=true)     │  Socket.IO  │  모델 → 게임 조종   │
+│  RL 오버레이 UI  │             │  사거리 최적 배치   │
 └─────────────────┘             └───────────────────┘
 ```
 
 ### 관측 공간 (67차원)
 
-| 인덱스 | 항목                      | 정규화       |
-| :----: | :------------------------ | :----------- |
-|   0    | 현재 라운드               | / 90         |
-|   1    | 남은 시간                 | / 60         |
-|   2    | 골드                      | / 10000      |
-|   3    | 적 수                     | / 60         |
-|   4    | 적 총 HP                  | / 1e7        |
-|   5    | 그리드 유닛 수            | / 36         |
-|   6    | 빈 그리드 수              | / 36         |
-|   7    | 필드 유닛 수              | / 30         |
-|   8    | 필드 총 DPS               | / 50000      |
-|  9-14  | 그리드 티어 분포 (T1~T6)  | / 36         |
-| 15-20  | 필드 티어 분포 (T1~T6)    | / 30         |
-| 21-23  | 소환/배치/조합 가능 여부  | boolean      |
-| 24-66  | 그리드 슬롯별 티어 인코딩 | / 6 (0=빈칸) |
+| 인덱스 | 항목                       | 정규화       |
+| :----: | :------------------------- | :----------- |
+|   0    | 현재 라운드                | / 90         |
+|   1    | 골드                       | / 10000      |
+|   2    | 남은 시간                  | / 60         |
+|   3    | 적 수                      | / maxEnemies |
+|   4    | 보스 존재 여부             | 0 or 1       |
+|   5    | 보스 HP 비율               | 0~1          |
+|   6    | 필드 총 DPS                | / 500000     |
+|   7    | 필드 유닛 수               | / 30         |
+|   8    | 빈 그리드 수               | / 36         |
+|   9    | 유효 조합 수               | / 54         |
+| 10-66  | 유닛 타입별 보유 수 (57종) | / 10         |
 
 ### 행동 공간 (170 이산 행동)
 
@@ -148,11 +150,44 @@
 | 59-115  | SELL    | 유닛 57종 중 하나를 판매 (골드 회수) |
 | 116-169 | COMBINE | 54개 레시피 중 하나로 조합           |
 
+### 사거리(Range) 기반 전투 모델
+
+실제 게임에서 적은 반경 280px 궤도를 순회합니다. 사거리가 짧은 유닛은 보스 라운드(단일 대상)에서 실효 DPS가 떨어집니다.
+
+| 등급 | 사거리 범위 | 보스전 DPS 효율 | 비고                      |
+| :--: | :---------: | :-------------: | :------------------------ |
+|  T1  |   80-100    |     70-75%      | 배치보다 조합 재료로 활용 |
+|  T2  |   90-220    |     73-100%     | 겐야(220)는 풀 효율       |
+|  T3  |   100-140   |     75-85%      | 중간 효율                 |
+|  T4  |   140-170   |     85-93%      | 주력 전력                 |
+|  T5  |   150-210   |     88-100%     | 고효율                    |
+|  T6  |   150-230   |     88-100%     | 최강 전력                 |
+
+- **일반 라운드** (다수 적): 모든 유닛 100% DPS (항상 사거리 내 적 존재)
+- **보스 라운드** (단일 대상): 사거리 효율 적용 → 고티어 유닛 필수
+- **실제 게임 배치**: RL이 사거리에 따라 최적 위치에 자동 배치 (짧은 사거리 → 궤도 근처, 긴 사거리 → 중앙)
+
+### 보상 체계
+
+| 이벤트       | 보상                 | 설명                          |
+| :----------- | :------------------- | :---------------------------- |
+| 라운드 생존  | +1.0 + round/30      | R1=1.03, R50=2.67, R89=3.97   |
+| 유닛 배치    | dps/100k × range_eff | 고DPS + 긴 사거리 → 높은 보상 |
+| 조합 성공    | 0.2 × 2^(tier-1)     | T4=1.6, T5=3.2, T6=6.4        |
+| 보스 처치    | +5.0                 | 보스 라운드 클리어            |
+| 90R 클리어   | +100.0               | 무잔 처치 (최종 목표)         |
+| 적 초과/실패 | -5.0                 | 게임 오버 패널티              |
+
 ### 사용법
 
-**1단계: Python 의존성 설치**
+**1단계: 의존성 설치**
 
 ```bash
+# Node.js 서버 의존성
+cd MyDefenseGame
+npm install
+
+# Python RL 의존성
 cd python
 pip install -r requirements.txt
 ```
@@ -160,13 +195,19 @@ pip install -r requirements.txt
 **2단계: 학습 시작**
 
 ```bash
-python train.py --timesteps 5000000 --n-envs 4
+cd python
+
+# 기본 학습 시작 (config.py 설정 사용)
+python train.py
+
+# 최신 체크포인트에서 자동 이어하기
+python train.py --resume
+
+# 특정 체크포인트 지정도 가능
+python train.py --resume ./models/demon_slayer_rl_1400000_steps.zip
 ```
 
-- `--timesteps`: 총 학습 스텝 수 (권장: 5M~10M)
-- `--n-envs`: 병렬 환경 수 (CPU 코어 수에 맞게 조정)
-- `--resume`: 기존 모델 이어서 학습
-- 학습 과정은 TensorBoard로 모니터링: `tensorboard --logdir python/tensorboard_logs`
+- 학습 과정은 TensorBoard로 모니터링: `tensorboard --logdir python/tb_logs`
 
 **3단계: 학습 결과 평가**
 
@@ -174,17 +215,19 @@ python train.py --timesteps 5000000 --n-envs 4
 python train.py --eval --resume
 ```
 
-**4단계: 실제 게임에서 테스트**
+**4단계: 실제 게임에서 시각적 테스트**
 
 ```bash
 # 터미널 1: 게임 서버 실행
+cd MyDefenseGame
 node server.js
 
 # 터미널 2: RL 브릿지 실행
 cd python
 python rl_bridge.py --model models/demon_slayer_final.zip
 
-# 브라우저: http://localhost:3000/?rl=true
+# 브라우저에서 접속: http://localhost:3000/?rl=true
+# → 좌상단 RL 오버레이에서 AI 행동/DPS/라운드 실시간 확인
 ```
 
 ---

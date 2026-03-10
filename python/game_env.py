@@ -84,6 +84,7 @@ class DemonSlayerEnv(gym.Env):
 
         # 캐시
         self._field_dps_cache = 0.0
+        self._field_boss_dps_cache = 0.0
         self._update_field_dps()
 
         return self._get_obs(), {}
@@ -261,9 +262,11 @@ class DemonSlayerEnv(gym.Env):
         self.field_units.append(unit_key)
         self._update_field_dps()
 
-        # 보상: 배치된 유닛의 DPS 기여도 기반
-        dps = UNIT_DATA[unit_key]['dps']
-        return min(dps / 100000.0, 0.5)
+        # 보상: DPS 기여도 + 사거리 비렌 보너스
+        data = UNIT_DATA[unit_key]
+        dps_reward = min(data['dps'] / 100000.0, 0.5)
+        range_bonus = self._range_efficiency(data['range'])
+        return dps_reward * range_bonus
 
     def _sell(self, unit_key):
         """그리드에서 유닛 판매"""
@@ -310,7 +313,8 @@ class DemonSlayerEnv(gym.Env):
             self._update_field_dps()
 
         result_tier = UNIT_DATA[result]['tier']
-        return result_tier * 0.3  # 높은 티어 조합일수록 높은 보상
+        # 고티어 조합에 기하급수적 보상 → T4:1.6, T5:3.2, T6:6.4
+        return 0.2 * (2 ** (result_tier - 1))
 
     # =================================================================
     # 게임 시뮬레이션
@@ -384,9 +388,11 @@ class DemonSlayerEnv(gym.Env):
             })
 
     def _apply_combat(self, dt):
-        """DPS 기반 전투: 약한 적부터 처치"""
+        """DPS 기반 전투: 보스 라운드에서는 사거리 효율 적용"""
         reward = 0.0
-        total_dps = self._field_dps_cache
+
+        has_boss = any(e['is_boss'] for e in self.enemies)
+        total_dps = self._field_boss_dps_cache if has_boss else self._field_dps_cache
         damage_pool = total_dps * dt
 
         if damage_pool <= 0 or not self.enemies:
@@ -410,11 +416,11 @@ class DemonSlayerEnv(gym.Env):
             self.enemies.remove(enemy)
             if enemy['is_boss']:
                 self.gold += 1000
-                reward += 3.0
+                reward += 5.0  # 보스킬 보상 증가
                 # 90라운드 보스(무잔) 처치 = 스토리 클리어
                 if self.round >= 90:
                     self.game_cleared = True
-                    reward += 50.0
+                    reward += 100.0  # 클리어 보상 대폭 증가
             else:
                 self.gold += get_kill_gold(self.round)
 
@@ -436,7 +442,8 @@ class DemonSlayerEnv(gym.Env):
             self.time_remaining = float(GAME_CONFIG['roundTime'])
             self.boss_spawned = False
             self.spawn_acc = 0.0
-            reward += 1.0  # 라운드 생존 보상
+            # 후반 라운드일수록 높은 생존 보상 (R1=1.0, R50=2.5, R89=4.5)
+            reward += 1.0 + (self.round / 30.0)
 
             # 라운드 91 이상 도달 시 (있을 수 없는 케이스지만 안전장치)
             if self.round > 90:
@@ -444,11 +451,34 @@ class DemonSlayerEnv(gym.Env):
 
         return reward
 
+    # 적 궤도 반지름 (mapRadius(300) - 20)
+    ENEMY_ORBIT_R = 280.0
+
+    @staticmethod
+    def _range_efficiency(unit_range):
+        """사거리 기반 보스전 실효 DPS 비율.
+
+        보스는 단일 대상으로 궤도를 순회하므로,
+        사거리가 짧은 유닛은 보스를 때리는 시간이 적음.
+        일반 적은 다수라 항상 누군가 사거리 안 → 100%.
+
+        efficiency = 0.5 + 0.5 * min(1.0, range / 200)
+          T1(80): 70%  T2(100): 75%  T3(120): 80%
+          T4(150): 87%  T5(180): 95%  T6(230): 100%
+        """
+        return 0.5 + 0.5 * min(1.0, unit_range / 200.0)
+
     def _update_field_dps(self):
-        """필드 유닛 총 DPS 캐시 갱신"""
-        self._field_dps_cache = sum(
-            UNIT_DATA[key]['dps'] for key in self.field_units
-        )
+        """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 분리)"""
+        raw_dps = 0.0
+        boss_dps = 0.0
+        for key in self.field_units:
+            d = UNIT_DATA[key]
+            dps = d['dps']
+            raw_dps += dps
+            boss_dps += dps * self._range_efficiency(d['range'])
+        self._field_dps_cache = raw_dps           # 일반 적 대상
+        self._field_boss_dps_cache = boss_dps     # 보스 대상
 
     # =================================================================
     # 유틸리티

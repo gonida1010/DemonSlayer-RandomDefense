@@ -102,17 +102,21 @@ io.on("connection", (socket) => {
     console.log("🤖 RL 클라이언트 연결!");
     rlSocket = socket;
     // 게임 브라우저에 RL 모드 시작 알림
-    io.emit("rl_mode_start", { speed: data?.speed || 10 });
+    if (gameSocket) {
+      gameSocket.emit("rl_mode_start", { speed: data?.speed || 10 });
+    }
   });
 
-  // RL 행동 전송 (Python → 게임)
+  // RL 행동 전송 (Python → 게임 브라우저)
   socket.on("rl_action", (action) => {
-    io.emit("rl_execute_action", action);
+    if (gameSocket) {
+      gameSocket.emit("rl_execute_action", action);
+    }
   });
 
-  // 게임 상태 전송 (게임 → Python)
+  // 게임 상태 전송 (게임 브라우저 → Python)
   socket.on("rl_state", (state) => {
-    if (rlSocket) {
+    if (rlSocket && rlSocket.id !== socket.id) {
       rlSocket.emit("rl_state", state);
     }
   });

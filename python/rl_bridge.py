@@ -65,13 +65,13 @@ class RLBridge:
         self.sio.connect(url)
 
     def state_to_obs(self, state):
-        """게임 상태 → 관측 벡터 변환"""
+        """게임 상태 → 관측 벡터 변환 (game_env._get_obs()와 완전히 동일)"""
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
         obs[0] = state.get('round', 1) / 90.0
         obs[1] = min(state.get('gold', 0) / 10000.0, 1.0)
         obs[2] = max(state.get('timeRemaining', 0), 0) / 60.0
-        obs[3] = min(state.get('enemyCount', 0) / GAME_CONFIG['maxEnemies'], 1.0)
+        obs[3] = min(state.get('enemyCount', 0) / state.get('maxEnemies', GAME_CONFIG['maxEnemies']), 1.0)
 
         enemies = state.get('enemies', [])
         boss = next((e for e in enemies if e.get('isBoss')), None)
@@ -85,9 +85,11 @@ class RLBridge:
         grid_state = state.get('gridState', [])
         empty_count = sum(1 for s in grid_state if s is None)
         obs[8] = empty_count / 36.0
-        obs[9] = 0.0  # 유효 조합 수 (간략화)
 
-        # 유닛 보유 수 카운트
+        # 유효 조합 수 (서버에서 계산해서 보내줌)
+        obs[9] = min(state.get('validCombines', 0) / 54.0, 1.0)
+
+        # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
         for slot in grid_state:
             if slot and 'key' in slot:
@@ -161,27 +163,45 @@ class RLBridge:
 
         return {'type': 'wait', 'params': {}}
 
-    def run(self, decision_interval=1.0):
+    def run(self, decision_interval=0.5):
         """메인 루프: 상태 수신 → 행동 결정 → 명령 전송"""
         print("게임 브라우저가 준비될 때까지 대기...")
+        print("  브라우저에서 http://localhost:3000/?rl=true 접속하세요")
 
         while not self.game_ready:
             time.sleep(0.5)
 
-        print("에이전트가 게임을 제어합니다!")
-        print("-" * 50)
+        print("=" * 55)
+        print("  에이전트가 게임을 제어합니다!")
+        print("  종료: Ctrl+C")
+        print("=" * 55)
 
         step = 0
+        last_round = 0
         while self.sio.connected:
             if not self.game_state:
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
             state = self.game_state
 
             if state.get('isGameOver'):
-                print(f"\n게임 종료! 최종 라운드: {state.get('round')}")
+                print(f"\n{'=' * 55}")
+                print(f"  게임 종료! 최종 라운드: {state.get('round')}")
+                print(f"  총 행동 수: {step}")
+                print(f"{'=' * 55}")
                 break
+
+            # 새 라운드 알림
+            cur_round = state.get('round', 0)
+            if cur_round != last_round:
+                dps = state.get('totalFieldDps', 0)
+                gold = state.get('gold', 0)
+                field_cnt = len(state.get('fieldUnits', []))
+                grid_filled = sum(1 for s in state.get('gridState', []) if s is not None)
+                print(f"\n── Round {cur_round} ──  DPS={dps:,.0f}  Gold={gold}  "
+                      f"Field={field_cnt}  Grid={grid_filled}/36")
+                last_round = cur_round
 
             obs = self.state_to_obs(state)
             mask = self.get_action_mask(state)
@@ -191,13 +211,10 @@ class RLBridge:
             self.sio.emit('rl_action', command)
 
             step += 1
-            if step % 20 == 0:
-                r = state.get('round', 0)
-                g = state.get('gold', 0)
-                dps = state.get('totalFieldDps', 0)
-                ec = state.get('enemyCount', 0)
-                print(f"  Step {step}: R{r} Gold={g} "
-                      f"DPS={dps:,.0f} Enemies={ec}")
+            # 행동 로그 (WAIT 제외)
+            if command['type'] != 'wait':
+                params_str = ', '.join(f"{k}={v}" for k, v in command.get('params', {}).items())
+                print(f"  [{step:>5}] {command['type'].upper():>7}  {params_str}")
 
             time.sleep(decision_interval)
 

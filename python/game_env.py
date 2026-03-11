@@ -200,7 +200,7 @@ class DemonSlayerEnv(gym.Env):
 
     def _execute_action(self, action):
         if action == ACTION_WAIT:
-            return 0.0
+            return self._wait_penalty()
 
         if action == ACTION_SUMMON:
             return self._summon()
@@ -218,6 +218,22 @@ class DemonSlayerEnv(gym.Env):
             return self._combine(recipe_idx)
 
         return -0.01  # 알수없는 행동
+
+    def _wait_penalty(self):
+        """WAIT 행동의 기회비용 패널티.
+
+        골드가 충분한데 빈칸도 있으면서 WAIT하면 패널티.
+        에이전트가 골드를 쓰지 않고 비축하는 것을 방지.
+        """
+        cost = GAME_CONFIG['unitSummonCost']  # 150
+        summons_possible = self.gold // cost
+        has_empty = sum(1 for s in self.grid if s is None)
+
+        if summons_possible > 0 and has_empty > 0:
+            # 소환 가능한 횟수에 비례하는 패널티 (max -0.5)
+            wasted = min(summons_possible, has_empty)
+            return -0.05 * wasted
+        return 0.0
 
     def _summon(self):
         """유닛 소환: 150G 소모 → 랜덤 T1~T3 유닛"""
@@ -248,12 +264,17 @@ class DemonSlayerEnv(gym.Env):
         slot = empty_indices[self.np_random.integers(0, len(empty_indices))]
         self.grid[slot] = unit_key
 
-        # 보상: T3 소환 시 약간의 추가 보상
-        bonus = 0.1 * tier if tier >= 2 else 0.0
-        return bonus
+        # 보상: 기본 소환 보상 + 그리드 채움 보너스
+        base_reward = 0.1 + 0.1 * tier  # T1=0.2, T2=0.3, T3=0.4
+
+        # 그리드 채움 보상: 유닛이 많을수록 조합 가능성 ↑
+        grid_units = sum(1 for s in self.grid if s is not None)
+        grid_bonus = 0.02 * grid_units  # 유닛 1개당 +0.02 (max 36개 = +0.72)
+
+        return base_reward + grid_bonus
 
     def _place(self, unit_key):
-        """그리드에서 필드로 유닛 배치"""
+        """그리드에서 필드로 유닛 배치 - 티어+DPS 보상"""
         if unit_key not in self.grid:
             return -0.01
 
@@ -262,22 +283,28 @@ class DemonSlayerEnv(gym.Env):
         self.field_units.append(unit_key)
         self._update_field_dps()
 
-        # 보상: DPS 기여도 + 사거리 비렌 보너스
         data = UNIT_DATA[unit_key]
+        # 티어 기반 보상: 모든 유닛 배치가 의미 있도록
+        # T1=0.15, T2=0.3, T3=0.45, T4=0.6, T5=0.75, T6=0.9
+        tier_reward = 0.15 * data['tier']
+        # DPS 기여 보상 + 사거리 효율
         dps_reward = min(data['dps'] / 100000.0, 0.5)
         range_bonus = self._range_efficiency(data['range'])
-        return dps_reward * range_bonus
+        return tier_reward + dps_reward * range_bonus
 
     def _sell(self, unit_key):
-        """그리드에서 유닛 판매"""
+        """그리드에서 유닛 판매 - 티어 비례 패널티"""
         if unit_key not in self.grid:
             return -0.01
 
         idx = self.grid.index(unit_key)
         self.grid[idx] = None
-        sell_price = UNIT_DATA[unit_key]['tier'] * 50
+        tier = UNIT_DATA[unit_key]['tier']
+        sell_price = tier * 50
         self.gold += sell_price
-        return 0.0  # 판매는 중립적
+        # 티어가 높을수록 판매 패널티 급증 → 조합 결과물 판매 방지
+        # T1:-0.1, T2:-0.2, T3:-0.4, T4:-0.8, T5:-1.6, T6:-3.2
+        return -0.1 * (2 ** (tier - 1))
 
     def _combine(self, recipe_idx):
         """레시피에 따라 두 유닛 조합"""
@@ -444,6 +471,13 @@ class DemonSlayerEnv(gym.Env):
             self.spawn_acc = 0.0
             # 후반 라운드일수록 높은 생존 보상 (R1=1.0, R50=2.5, R89=4.5)
             reward += 1.0 + (self.round / 30.0)
+
+            # 후반 DPS 보너스: R60+ 에서 DPS가 높을수록 추가 보상
+            # 무잔 요구 DPS(333k) 이상으로 밀어붙이기 위한 인센티브
+            if self.round >= 60:
+                # boss DPS 기준 (실제 보스전 성능)
+                dps_ratio = min(self._field_boss_dps_cache / 400000.0, 1.0)
+                reward += dps_ratio * 2.0  # max +2.0/라운드
 
             # 라운드 91 이상 도달 시 (있을 수 없는 케이스지만 안전장치)
             if self.round > 90:

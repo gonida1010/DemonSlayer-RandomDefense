@@ -65,7 +65,7 @@ class RLBridge:
         self.sio.connect(url)
 
     def state_to_obs(self, state):
-        """게임 상태 → 관측 벡터 변환 (game_env._get_obs()와 완전히 동일)"""
+        """게임 상태 → 관측 벡터 변환 (game_env._get_obs() v4: 67차원)"""
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
         obs[0] = state.get('round', 1) / 90.0
@@ -97,7 +97,8 @@ class RLBridge:
                 if idx is not None:
                     counts[idx] += 1
         for u in field_units:
-            idx = UNIT_KEY_TO_IDX.get(u.get('key'))
+            key = u.get('key') if isinstance(u, dict) else u
+            idx = UNIT_KEY_TO_IDX.get(key)
             if idx is not None:
                 counts[idx] += 1
         for i in range(NUM_UNIT_TYPES):
@@ -163,8 +164,13 @@ class RLBridge:
 
         return {'type': 'wait', 'params': {}}
 
-    def run(self, decision_interval=0.5):
-        """메인 루프: 상태 수신 → 행동 결정 → 명령 전송"""
+    def run(self, decision_interval=0.02):
+        """메인 루프: 상태 수신 → 행동 결정 → 명령 전송
+
+        decision_interval: 행동 간격(초). 5배속 기준 0.02초 권장.
+        게임 내 3초(학습 STEP_DURATION) = 5배속 시 실시간 0.6초
+        → 0.02초 간격이면 0.6초에 30번 행동 가능
+        """
         print("게임 브라우저가 준비될 때까지 대기...")
         print("  브라우저에서 http://localhost:3000/?rl=true 접속하세요")
 

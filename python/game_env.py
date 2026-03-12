@@ -1,12 +1,12 @@
 """
-game_env.py - 귀멸의 칼날 랜덤 디펜스 강화학습 환경
+game_env.py - 귀멸의 칼날 랜덤 디펜스 강화학습 환경 v4
 Gymnasium 호환 환경 (MaskablePPO 지원)
 
-핵심 게임 로직을 Python으로 시뮬레이션:
-- 유닛 소환/조합/배치/판매
-- 적 스폰 및 DPS 기반 전투
-- 라운드 진행 및 보스전
-- 승리 조건: 90라운드 무잔 처치
+v4 핵심 변경:
+- 관측 67차원 복원 (개별 유닛 카운트 → 조합 가치 평가 핵심)
+- 조합 = 지배적 보상 (0.5 × tier²: T4=8.0, T5=12.5, T6=18.0)
+- 배치/소환 = 최소 보상 (배치보다 조합 동기 부여)
+- 위험도 연속 패널티 + 적 처치 미세 보상 유지
 """
 import gymnasium as gym
 import numpy as np
@@ -24,7 +24,7 @@ from game_data import (
 
 class DemonSlayerEnv(gym.Env):
     """
-    귀멸의 칼날 랜덤 디펜스 - 강화학습 환경
+    귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 v4
 
     관측 공간 (67차원):
       [0]  round / 90
@@ -50,9 +50,10 @@ class DemonSlayerEnv(gym.Env):
     metadata = {'render_modes': []}
 
     # 에이전트 결정 간격 (초) - 이 시간만큼 게임이 진행됨
-    STEP_DURATION = 3.0
+    STEP_DURATION = 2.0  # 실제 게임에서의 빠른 판단을 반영
     TICK_SIZE = 0.5  # 시뮬레이션 틱 크기 (초)
     GRID_SIZE = 36   # 6x6 그리드
+    COMBAT_EFFICIENCY = 0.75  # 투사체 비행/사거리 손실 반영 (75%)
 
     def __init__(self, render_mode=None):
         super().__init__()
@@ -153,7 +154,7 @@ class DemonSlayerEnv(gym.Env):
         return mask
 
     # =================================================================
-    # 관측 생성
+    # 관측 생성 (v4: 67차원 개별 유닛 카운트 복원)
     # =================================================================
 
     def _get_obs(self):
@@ -195,7 +196,7 @@ class DemonSlayerEnv(gym.Env):
         return obs
 
     # =================================================================
-    # 행동 실행
+    # 행동 실행 (v4: 조합 지배적 보상)
     # =================================================================
 
     def _execute_action(self, action):
@@ -217,26 +218,20 @@ class DemonSlayerEnv(gym.Env):
             recipe_idx = action - ACTION_COMBINE_START
             return self._combine(recipe_idx)
 
-        return -0.01  # 알수없는 행동
+        return -0.01
 
     def _wait_penalty(self):
-        """WAIT 행동의 기회비용 패널티.
-
-        골드가 충분한데 빈칸도 있으면서 WAIT하면 패널티.
-        에이전트가 골드를 쓰지 않고 비축하는 것을 방지.
-        """
-        cost = GAME_CONFIG['unitSummonCost']  # 150
+        """WAIT 패널티: 소환 가능한데 대기하면 가벼운 패널티"""
+        cost = GAME_CONFIG['unitSummonCost']
         summons_possible = self.gold // cost
         has_empty = sum(1 for s in self.grid if s is None)
 
         if summons_possible > 0 and has_empty > 0:
-            # 소환 가능한 횟수에 비례하는 패널티 (max -0.5)
-            wasted = min(summons_possible, has_empty)
-            return -0.05 * wasted
+            return -0.02 * min(summons_possible, has_empty)
         return 0.0
 
     def _summon(self):
-        """유닛 소환: 150G 소모 → 랜덤 T1~T3 유닛"""
+        """유닛 소환: 재료 확보를 격려 (조합의 전제조건)"""
         cost = GAME_CONFIG['unitSummonCost']
         if self.gold < cost:
             return -0.01
@@ -264,17 +259,10 @@ class DemonSlayerEnv(gym.Env):
         slot = empty_indices[self.np_random.integers(0, len(empty_indices))]
         self.grid[slot] = unit_key
 
-        # 보상: 기본 소환 보상 + 그리드 채움 보너스
-        base_reward = 0.1 + 0.1 * tier  # T1=0.2, T2=0.3, T3=0.4
-
-        # 그리드 채움 보상: 유닛이 많을수록 조합 가능성 ↑
-        grid_units = sum(1 for s in self.grid if s is not None)
-        grid_bonus = 0.02 * grid_units  # 유닛 1개당 +0.02 (max 36개 = +0.72)
-
-        return base_reward + grid_bonus
+        return 0.15  # 조합 재료 확보 유도
 
     def _place(self, unit_key):
-        """그리드에서 필드로 유닛 배치 - 티어+DPS 보상"""
+        """배치: 의도적으로 낮은 보상 (조합 > 즉시 배치 유도)"""
         if unit_key not in self.grid:
             return -0.01
 
@@ -283,17 +271,12 @@ class DemonSlayerEnv(gym.Env):
         self.field_units.append(unit_key)
         self._update_field_dps()
 
-        data = UNIT_DATA[unit_key]
-        # 티어 기반 보상: 모든 유닛 배치가 의미 있도록
-        # T1=0.15, T2=0.3, T3=0.45, T4=0.6, T5=0.75, T6=0.9
-        tier_reward = 0.15 * data['tier']
-        # DPS 기여 보상 + 사거리 효율
-        dps_reward = min(data['dps'] / 100000.0, 0.5)
-        range_bonus = self._range_efficiency(data['range'])
-        return tier_reward + dps_reward * range_bonus
+        tier = UNIT_DATA[unit_key]['tier']
+        # T1=0.1, T2=0.2, ..., T6=0.6 (조합 보상 대비 매우 작음)
+        return 0.1 * tier
 
     def _sell(self, unit_key):
-        """그리드에서 유닛 판매 - 티어 비례 패널티"""
+        """판매: 티어 비례 선형 패널티"""
         if unit_key not in self.grid:
             return -0.01
 
@@ -302,12 +285,10 @@ class DemonSlayerEnv(gym.Env):
         tier = UNIT_DATA[unit_key]['tier']
         sell_price = tier * 50
         self.gold += sell_price
-        # 티어가 높을수록 판매 패널티 급증 → 조합 결과물 판매 방지
-        # T1:-0.1, T2:-0.2, T3:-0.4, T4:-0.8, T5:-1.6, T6:-3.2
-        return -0.1 * (2 ** (tier - 1))
+        return -0.1 * tier  # T1:-0.1 ~ T6:-0.6
 
     def _combine(self, recipe_idx):
-        """레시피에 따라 두 유닛 조합"""
+        """조합: tier² 스케일 (지배적 보상 신호)"""
         if recipe_idx < 0 or recipe_idx >= NUM_RECIPES:
             return -0.01
 
@@ -339,9 +320,10 @@ class DemonSlayerEnv(gym.Env):
             self.field_units.append(result)
             self._update_field_dps()
 
+        # 보상: 0.5 × tier² (조합이 지배적 보상 신호)
+        # T2=2.0, T3=4.5, T4=8.0, T5=12.5, T6=18.0
         result_tier = UNIT_DATA[result]['tier']
-        # 고티어 조합에 기하급수적 보상 → T4:1.6, T5:3.2, T6:6.4
-        return 0.2 * (2 ** (result_tier - 1))
+        return 0.5 * result_tier * result_tier
 
     # =================================================================
     # 게임 시뮬레이션
@@ -369,7 +351,6 @@ class DemonSlayerEnv(gym.Env):
             if not self.boss_spawned:
                 self._spawn_boss()
                 self.boss_spawned = True
-            # 보스 라운드에서는 일반 적 미생성
         else:
             if self.time_remaining > 5:
                 self.spawn_acc += dt
@@ -381,17 +362,22 @@ class DemonSlayerEnv(gym.Env):
         # --- 2. 전투 (DPS 적용) ---
         reward += self._apply_combat(dt)
 
-        # --- 3. 시간 경과 ---
+        # --- 3. 위험도 패널티 (적 누적 시 연속 손해) ---
+        if self.enemies:
+            danger = len(self.enemies) / GAME_CONFIG['maxEnemies']
+            reward -= 0.05 * danger * danger * dt
+
+        # --- 4. 시간 경과 ---
         self.time_remaining -= dt
 
-        # --- 4. 라운드 종료 체크 ---
+        # --- 5. 라운드 종료 체크 ---
         if self.time_remaining <= 0:
             reward += self._process_round_end()
 
-        # --- 5. 적 수 초과 체크 ---
+        # --- 6. 적 수 초과 체크 ---
         if len(self.enemies) > GAME_CONFIG['maxEnemies']:
             self.game_over = True
-            reward -= 5.0
+            reward -= 3.0
 
         return reward
 
@@ -415,11 +401,16 @@ class DemonSlayerEnv(gym.Env):
             })
 
     def _apply_combat(self, dt):
-        """DPS 기반 전투: 보스 라운드에서는 사거리 효율 적용"""
+        """
+        DPS 기반 전투: 투사체 비행/사거리 손실 반영
+        실제 게임에서는 투사체가 날아가서 맞아야 데미지 적용되므로
+        시뮬레이션 DPS의 75%만 실제 적용
+        """
         reward = 0.0
 
         has_boss = any(e['is_boss'] for e in self.enemies)
-        total_dps = self._field_boss_dps_cache if has_boss else self._field_dps_cache
+        raw_dps = self._field_boss_dps_cache if has_boss else self._field_dps_cache
+        total_dps = raw_dps * self.COMBAT_EFFICIENCY
         damage_pool = total_dps * dt
 
         if damage_pool <= 0 or not self.enemies:
@@ -443,13 +434,14 @@ class DemonSlayerEnv(gym.Env):
             self.enemies.remove(enemy)
             if enemy['is_boss']:
                 self.gold += 1000
-                reward += 5.0  # 보스킬 보상 증가
+                reward += 10.0  # 보스킬 보상
                 # 90라운드 보스(무잔) 처치 = 스토리 클리어
                 if self.round >= 90:
                     self.game_cleared = True
-                    reward += 100.0  # 클리어 보상 대폭 증가
+                    reward += 50.0  # 클리어 보상
             else:
                 self.gold += get_kill_gold(self.round)
+                reward += 0.02  # 소량 적 처치 보상 (~0.9/라운드)
 
         return reward
 
@@ -462,24 +454,17 @@ class DemonSlayerEnv(gym.Env):
         if is_boss_round and boss_alive:
             # 보스 미처치 → 게임오버
             self.game_over = True
-            reward -= 5.0
+            reward -= 3.0
         else:
             # 다음 라운드로
             self.round += 1
             self.time_remaining = float(GAME_CONFIG['roundTime'])
             self.boss_spawned = False
             self.spawn_acc = 0.0
-            # 후반 라운드일수록 높은 생존 보상 (R1=1.0, R50=2.5, R89=4.5)
-            reward += 1.0 + (self.round / 30.0)
+            # 라운드 생존 보상: 완만한 증가 (조합 보상 대비 작게)
+            # R2=1.07, R10=1.33, R25=1.83, R50=2.67, R90=4.0
+            reward += 1.0 + self.round / 30.0
 
-            # 후반 DPS 보너스: R60+ 에서 DPS가 높을수록 추가 보상
-            # 무잔 요구 DPS(333k) 이상으로 밀어붙이기 위한 인센티브
-            if self.round >= 60:
-                # boss DPS 기준 (실제 보스전 성능)
-                dps_ratio = min(self._field_boss_dps_cache / 400000.0, 1.0)
-                reward += dps_ratio * 2.0  # max +2.0/라운드
-
-            # 라운드 91 이상 도달 시 (있을 수 없는 케이스지만 안전장치)
             if self.round > 90:
                 self.game_over = True
 

@@ -2129,7 +2129,10 @@ class GameScene extends Phaser.Scene {
     this.time.timeScale = targetSpeed;
     this.physics.world.timeScale = 1 / targetSpeed;
     this.txtSpeed.setText(`속도: ${targetSpeed}x`);
-    if (targetSpeed === 2) this.txtSpeed.setColor("#ffff00");
+    // 속도별 색상 구분
+    if (targetSpeed >= 5) this.txtSpeed.setColor("#ff4444");
+    else if (targetSpeed >= 3) this.txtSpeed.setColor("#ff8800");
+    else if (targetSpeed >= 2) this.txtSpeed.setColor("#ffff00");
     else this.txtSpeed.setColor("0x000000");
   }
 
@@ -3925,17 +3928,20 @@ class GameScene extends Phaser.Scene {
     b.target = target;
     b.damage = unit.dataVal.dmg;
     b.isCritical = Math.random() < 0.1;
-    b.speed = bulletSpeed;
+    b.baseSpeed = bulletSpeed; // 기본 속도 저장
+    b.speed = bulletSpeed * this.time.timeScale; // 배속에 비례
     b.savedFrameRate = animFrameRate;
 
     // 5. 시점에 적을 바라보게 회전(애니메이션이 회전!)
     const angle = Phaser.Math.Angle.Between(unit.x, unit.y, target.x, target.y);
     b.setRotation(angle + rotationOffset);
 
-    this.physics.velocityFromRotation(angle, bulletSpeed, b.body.velocity);
+    this.physics.velocityFromRotation(angle, b.speed, b.body.velocity);
   }
 
   updateBullets() {
+    const timeScale = this.time.timeScale;
+
     this.bullets.children.iterate((b) => {
       // 활성 상태가 아니거나, 이미 적에게 맞아서 멈춘(body.enable false) 총알은 이동 로직 건너뜀
       if (!b || !b.active || !b.body.enable) return;
@@ -3946,13 +3952,27 @@ class GameScene extends Phaser.Scene {
         return;
       }
 
+      // 배속에 비례하는 투사체 속도
+      const scaledSpeed = b.baseSpeed * timeScale;
+      b.speed = scaledSpeed;
+
+      // 고배속에서 투사체가 적 근처에 있으면 즉시 히트 (터널링 방지)
+      const distToTarget = Phaser.Math.Distance.Between(
+        b.x,
+        b.y,
+        b.target.x,
+        b.target.y,
+      );
+      if (distToTarget < 20 * timeScale) {
+        this.hitEnemy(b, b.target);
+        return;
+      }
+
       // [유도 기능 로직]
-      // 현재 총알 위치에서 목표 위치까지의 각도를 계산 후 이동
       const angle = Phaser.Math.Angle.Between(b.x, b.y, b.target.x, b.target.y);
-      this.physics.velocityFromRotation(angle, b.speed, b.body.velocity);
+      this.physics.velocityFromRotation(angle, scaledSpeed, b.body.velocity);
 
       // 투사체 머리가 적을 향하도록 이미지 회전
-      // b.setRotation(angle + (Math.PI / 2)); // 이미지 방향에 따라 +90도 필요할 수 있음
       b.setRotation(angle);
     });
   }
@@ -4853,7 +4873,7 @@ async function bootstrap() {
           if (gameScene) {
             gameScene.initRLMode();
             // RL 모드에서는 최고 속도로 실행
-            gameScene.applySpeedChange(2.0);
+            gameScene.applySpeedChange(5.0);
           }
         }, 1000);
       }, 500);

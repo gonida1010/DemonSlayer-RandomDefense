@@ -206,7 +206,7 @@ BOSS_DATA = {
 # 59 ~ 115: SELL(unit_keys[i-59])
 # 116 ~ 169: COMBINE(recipes[i-116])
 NUM_ACTIONS = 1 + 1 + NUM_UNIT_TYPES + NUM_UNIT_TYPES + NUM_RECIPES  # 170
-OBS_DIM = 10 + NUM_UNIT_TYPES  # 67
+OBS_DIM = 10 + NUM_UNIT_TYPES  # 67 (v4: 개별 유닛 카운트 복원)
 
 ACTION_WAIT = 0
 ACTION_SUMMON = 1
@@ -222,8 +222,8 @@ SUMMON_PROBS = {1: 0.70, 2: 0.20, 3: 0.10}
 
 
 def get_normal_enemy_hp(round_num):
-    """일반 적 체력 계산 (data.normal.js 공식 그대로)"""
-    base_hp = round_num * 200
+    """일반 적 체력 계산 (game.js spawnEnemy 공식 그대로)"""
+    base_hp = round_num * 150  # game.js: this.round * 150
     if round_num > 10:
         base_hp += round_num * round_num * 30
     if round_num >= 20:
@@ -235,3 +235,17 @@ def get_kill_gold(round_num):
     """적 처치 시 골드 보상"""
     reward = 5 + round_num // 4
     return min(reward, 10)
+
+
+def get_required_dps(round_num):
+    """해당 라운드 생존에 필요한 대략적 DPS (적 오버플로우 방지 기준)"""
+    is_boss = (round_num % GAME_CONFIG['bossInterval'] == 0)
+    if is_boss:
+        boss_hp = BOSS_DATA.get(round_num, {}).get('hp', 1000)
+        return boss_hp / float(GAME_CONFIG['roundTime'])
+    else:
+        enemy_hp = get_normal_enemy_hp(round_num)
+        spawn_dur = max(GAME_CONFIG['roundTime'] - 5, 1)
+        num_enemies = spawn_dur / GAME_CONFIG['spawnInterval']
+        total_hp = enemy_hp * num_enemies
+        return total_hp / float(GAME_CONFIG['roundTime'])

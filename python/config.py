@@ -1,52 +1,93 @@
 # -*- coding: utf-8 -*-
 """
-config.py - 학습 설정 파일
+config.py - 강화학습 설정 파일 (하드 모드 + 다중 알고리즘)
 
-모든 학습 하이퍼파라미터와 경로를 이 파일에서 관리합니다.
-python train.py 실행 시 이 설정이 기본값으로 적용됩니다.
+지원 알고리즘:
+  1. MaskablePPO  - On-policy, 액션 마스킹 네이티브
+  2. RecurrentPPO - LSTM 기반, 순차 의사결정
+  3. DQN          - Off-policy, 경험 리플레이
+
+학습 명령어:
+  python train.py --algorithm ppo                    # PPO 학습 시작
+  python train.py --algorithm ppo --resume           # PPO 이어서 학습
+  python train.py --algorithm recurrent              # RecurrentPPO 학습
+  python train.py --algorithm recurrent --resume     # RecurrentPPO 이어서 학습
+  python train.py --algorithm dqn                    # DQN 학습
+  python train.py --algorithm dqn --resume           # DQN 이어서 학습
+  python train.py --eval models/ppo/best_model.zip   # 모델 평가
 """
 
 # =============================================================
-# 1. 학습 기본 설정
+# 1. 공통 설정
 # =============================================================
-TOTAL_TIMESTEPS = 10_000_000      # 파인튜닝: 기존 10M + 5M 추가
-N_ENVS = 8                        # 병렬 환경 수 (CPU 코어에 맞게 조정)
-EVAL_EPISODES = 20                # 학습 후 평가 에피소드 수
+TOTAL_TIMESTEPS = 30_000_000      # 총 학습 타임스텝
+N_ENVS = 6                        # 병렬 환경 수 (CPU 코어에 맞게 조정)
+EVAL_EPISODES = 200                # 평가 에피소드 수
+DEVICE = "auto"                   # "auto", "cuda", "cpu"
+PROGRESS_BAR = True               # tqdm 진행률 바
+PRINT_INTERVAL = 1000              # 에피소드 통계 출력 간격
 
 # =============================================================
-# 2. PPO 하이퍼파라미터
+# 2. 저장 / 로깅 경로 (알고리즘별 분리)
 # =============================================================
-LEARNING_RATE = 3e-4             # 새 환경 학습
-N_STEPS = 4096                   # 환경당 롤아웃 스텝
-BATCH_SIZE = 2048                # 안정적 그라디언트
-N_EPOCHS = 10                    # PPO 업데이트 에포크
-GAMMA = 0.998                    # 장기 보상 중시 (90라운드)
-GAE_LAMBDA = 0.95                # GAE 람다
-CLIP_RANGE = 0.2                 # PPO 클립 범위
-ENT_COEF = 0.03                  # v4: 적절한 탐색 (0.1은 과다 → 정책 흐림)
-VF_COEF = 0.5                    # 가치 함수 계수
-MAX_GRAD_NORM = 0.5              # 그래디언트 클리핑
+SAVE_DIR_BASE = "./models"        # models/ppo/, models/recurrent/, models/dqn/
+LOG_DIR_BASE = "./tb_logs"        # tb_logs/ppo/, tb_logs/recurrent/, tb_logs/dqn/
+CHECKPOINT_FREQ = 50_000          # 체크포인트 저장 간격
 
 # =============================================================
-# 3. 네트워크 아키텍처
+# 3. MaskablePPO 하이퍼파라미터
 # =============================================================
-NET_ARCH_PI = [512, 256]         # v4: 67-dim obs에 적합
-NET_ARCH_VF = [512, 256]         # v4: 가치 추정 네트워크
+PPO_CONFIG = {
+    'learning_rate': 3e-4,
+    'n_steps': 4096,
+    'batch_size': 2048,
+    'n_epochs': 10,
+    'gamma': 0.99,
+    'gae_lambda': 0.95,
+    'clip_range': 0.2,
+    'ent_coef': 0.03,
+    'vf_coef': 0.5,
+    'max_grad_norm': 0.5,
+    'net_arch_pi': [512, 256],
+    'net_arch_vf': [512, 256],
+}
 
 # =============================================================
-# 4. 저장 / 로깅 경로
+# 4. RecurrentPPO 하이퍼파라미터
 # =============================================================
-SAVE_DIR = "./models"            # 체크포인트 및 최종 모델 저장
-LOG_DIR = "./tb_logs"            # TensorBoard 로그
-CHECKPOINT_FREQ = 50_000         # 체크포인트 저장 간격 (스텝)
+RECURRENT_CONFIG = {
+    'learning_rate': 2.5e-4,
+    'n_steps': 2048,             # LSTM은 더 짧은 롤아웃이 안정적
+    'batch_size': 1024,
+    'n_epochs': 5,               # LSTM은 적은 에포크
+    'gamma': 0.99,
+    'gae_lambda': 0.95,
+    'clip_range': 0.2,
+    'ent_coef': 0.02,
+    'vf_coef': 0.5,
+    'max_grad_norm': 0.5,
+    'lstm_hidden_size': 256,     # LSTM 히든 크기
+    'n_lstm_layers': 1,          # LSTM 레이어 수
+    'net_arch_pi': [256],        # LSTM 뒤 추가 레이어
+    'net_arch_vf': [256],
+}
 
 # =============================================================
-# 5. 디바이스
+# 5. DQN 하이퍼파라미터
 # =============================================================
-DEVICE = "auto"                  # "auto"=GPU 있으면 GPU, "cuda", "cpu" 선택
-
-# =============================================================
-# 6. 기타
-# =============================================================
-PROGRESS_BAR = True              # tqdm 진행률 바 표시 (False로 바꾸면 비활성화)
-PRINT_INTERVAL = 100              # 에피소드 통계 출력 간격
+DQN_CONFIG = {
+    'learning_rate': 1e-4,
+    'buffer_size': 500_000,      # 리플레이 버퍼 크기
+    'learning_starts': 10_000,   # 학습 시작 전 탐색 스텝
+    'batch_size': 256,
+    'tau': 0.005,                # 소프트 업데이트 계수
+    'gamma': 0.999,
+    'train_freq': 4,             # 4 스텝마다 학습
+    'gradient_steps': 1,
+    'target_update_interval': 1000,
+    'exploration_fraction': 0.2,
+    'exploration_initial_eps': 1.0,
+    'exploration_final_eps': 0.05,
+    'max_grad_norm': 10.0,
+    'net_arch': [512, 512, 256],  # DQN은 더 깊은 네트워크
+}

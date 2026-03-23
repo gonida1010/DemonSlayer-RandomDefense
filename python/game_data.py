@@ -1,19 +1,18 @@
 """
 game_data.py - 귀멸의 칼날 랜덤 디펜스 게임 데이터
-data.normal.js에서 추출한 스토리 모드(Normal) 데이터
+data.hard.js에서 추출한 지옥 모드(Hard) 데이터 - 무한 라운드
 """
 
 # =====================================================================
-# 게임 설정 (Normal Mode)
+# 게임 설정 (Hard Mode - 무한 라운드)
 # =====================================================================
 GAME_CONFIG = {
     'initialGold': 1200,
     'maxEnemies': 60,
     'roundTime': 60,
-    'spawnInterval': 1.2,       # 적 스폰 간격 (초)
+    'spawnInterval': 1.0,        # 하드: 1.0초 (노멀: 1.2초)
     'unitSummonCost': 150,
-    'finalRound': 90,
-    'bossInterval': 10,         # 몇 라운드마다 보스
+    'bossInterval': 10,          # 10라운드마다 보스
 }
 
 # =====================================================================
@@ -82,12 +81,12 @@ UNIT_DATA = {
     'giyu_calm':           {'tier': 6, 'dmg': 53200, 'speed': 950,  'range': 210},
     'sanemi_wind_god':     {'tier': 6, 'dmg': 43500, 'speed': 750,  'range': 200},
     'love_snake_couple':   {'tier': 6, 'dmg': 28000, 'speed': 500,  'range': 180},
-    'muichiro_transparent':{'tier': 6, 'dmg': 82500, 'speed': 1500, 'range': 200},
-    'koku':                {'tier': 6, 'dmg': 54400, 'speed': 850,  'range': 200},
-    'tanjiro_king':        {'tier': 6, 'dmg': 29250, 'speed': 450,  'range': 190},
+    'muichiro_transparent':{'tier': 6, 'dmg': 82500, 'speed': 1500, 'range': 260},
+    'koku':                {'tier': 6, 'dmg': 54400, 'speed': 850,  'range': 240},
+    'tanjiro_king':        {'tier': 6, 'dmg': 29250, 'speed': 450,  'range': 160},
     'twin_destiny':        {'tier': 6, 'dmg': 60000, 'speed': 400,  'range': 220},
-    'rengoku_legend':      {'tier': 6, 'dmg': 56700, 'speed': 900,  'range': 200},
-    'nezuko_sun':          {'tier': 6, 'dmg': 37200, 'speed': 600,  'range': 200},
+    'rengoku_legend':      {'tier': 6, 'dmg': 56700, 'speed': 900,  'range': 210},
+    'nezuko_sun':          {'tier': 6, 'dmg': 37200, 'speed': 600,  'range': 190},
 }
 
 # DPS 사전 계산
@@ -171,31 +170,46 @@ RECIPES = [
     {'a': 'muichiro_mark', 'b': 'tengen_score',   'result': 'muichiro_transparent'},
 
     # [히든] 특수 조합
-    {'a': 'obanai',        'b': 'muichiro',       'result': 'yoriichi_zero'},
-    {'a': 'yoriichi_zero', 'b': 'sanemi_mark',    'result': 'koku'},
-    {'a': 'giyu_mark',     'b': 'nezuko_awake',   'result': 'tanjiro_king'},
-    {'a': 'yoriichi',      'b': 'koku',           'result': 'twin_destiny'},
-    {'a': 'rengoku',       'b': 'kanae',          'result': 'rengoku_smile'},
-    {'a': 'rengoku_smile', 'b': 'tanjiro_sun',    'result': 'rengoku_legend'},
-    {'a': 'nezuko_awake',  'b': 'tamayo_yushiro', 'result': 'nezuko_sun'},
+    {'a': 'obanai',        'b': 'muichiro',       'result': 'yoriichi_zero',  'hidden': True},
+    {'a': 'yoriichi_zero', 'b': 'sanemi_mark',    'result': 'koku',           'hidden': True},
+    {'a': 'giyu_mark',     'b': 'nezuko_awake',   'result': 'tanjiro_king',   'hidden': True},
+    {'a': 'yoriichi',      'b': 'koku',           'result': 'twin_destiny',   'hidden': True},
+    {'a': 'rengoku',       'b': 'kanae',          'result': 'rengoku_smile',  'hidden': True},
+    {'a': 'rengoku_smile', 'b': 'tanjiro_sun',    'result': 'rengoku_legend', 'hidden': True},
+    {'a': 'nezuko_awake',  'b': 'tamayo_yushiro', 'result': 'nezuko_sun',     'hidden': True},
 ]
 
 NUM_RECIPES = len(RECIPES)  # 54
 
+# 히든 레시피 인덱스 집합
+HIDDEN_RECIPE_INDICES = frozenset(
+    i for i, r in enumerate(RECIPES) if r.get('hidden', False)
+)
+
 # =====================================================================
-# 보스 데이터
+# 보스 데이터 (Hard Mode - 2~3배 강화)
 # =====================================================================
 BOSS_DATA = {
-    10: {'name': '하현5 루이',       'hp': 50000},
-    20: {'name': '하현1 엔무',       'hp': 100000},
-    30: {'name': '상현6 다키',       'hp': 250000},
-    40: {'name': '상현5 굣코',       'hp': 600000},
-    50: {'name': '상현4 한텐구',     'hp': 1000000},
-    60: {'name': '상현3 아카자',     'hp': 2000000},
-    70: {'name': '상현2 도우마',     'hp': 5000000},
-    80: {'name': '상현1 코쿠시보',   'hp': 10000000},
-    90: {'name': '키부츠지 무잔',    'hp': 20000000},
+    10: {'name': '하현5 루이',       'hp': 100000},
+    20: {'name': '하현1 엔무',       'hp': 200000},
+    30: {'name': '상현6 다키',       'hp': 500000},
+    40: {'name': '상현5 굣코',       'hp': 1000000},
+    50: {'name': '상현4 한텐구',     'hp': 3000000},
+    60: {'name': '상현3 아카자',     'hp': 10000000},
+    70: {'name': '상현2 도우마',     'hp': 20000000},
+    80: {'name': '상현1 코쿠시보',   'hp': 30000000},
+    90: {'name': '키부츠지 무잔',    'hp': 60000000},
 }
+
+# 90라운드 이후 보스: 무잔 재등장 + 라운드 지수 스케일링
+def get_boss_hp(round_num):
+    """보스 체력 계산 (무한 모드) — 90 이후 60M × 1.03^(round-90)"""
+    if round_num in BOSS_DATA:
+        return BOSS_DATA[round_num]['hp']
+    if round_num > 90 and round_num % GAME_CONFIG['bossInterval'] == 0:
+        base_hp = BOSS_DATA[90]['hp']
+        return int(base_hp * (1.03 ** (round_num - 90)))
+    return 0
 
 # =====================================================================
 # 행동 공간 정의
@@ -207,6 +221,36 @@ BOSS_DATA = {
 # 116 ~ 169: COMBINE(recipes[i-116])
 NUM_ACTIONS = 1 + 1 + NUM_UNIT_TYPES + NUM_UNIT_TYPES + NUM_RECIPES  # 170
 OBS_DIM = 10 + NUM_UNIT_TYPES  # 67 (v4: 개별 유닛 카운트 복원)
+
+# =====================================================================
+# 시너지 (Synergy) - T6 유닛 조합 보너스
+# 3명이 필드에 모두 배치되면 해당 유닛 공격력 1.2배
+# 모든 T6 유닛이 최소 2개 시너지에 포함
+# =====================================================================
+SYNERGIES = [
+    # 카마도 가족 (Kamado Family)
+    {'name': '카마도 혈통', 'units': ['tanjiro_final', 'nezuko_sun', 'tanjiro_king']},
+    # 동기조 (Same Generation)
+    {'name': '동기조의 유대', 'units': ['tanjiro_final', 'inosuke_king', 'zenitsu_7th']},
+    # 코쿠시보전 (Upper Moon 1 Battle)
+    {'name': '상현1 토벌대', 'units': ['gyomei_mark', 'sanemi_wind_god', 'muichiro_transparent']},
+    # 전설의 쌍둥이 (Legendary Twins)
+    {'name': '쌍둥이의 인연', 'units': ['yoriichi', 'koku', 'twin_destiny']},
+    # 탄지로의 스승들 (Tanjiro's Masters)
+    {'name': '귀살대 핵심', 'units': ['tanjiro_final', 'giyu_calm', 'rengoku_legend']},
+    # 주 합동 작전 (Hashira Alliance)
+    {'name': '주 연합전선', 'units': ['giyu_calm', 'sanemi_wind_god', 'love_snake_couple']},
+    # 불꽃의 의지 (Will of Flame)
+    {'name': '불꽃의 의지', 'units': ['rengoku_legend', 'nezuko_sun', 'love_snake_couple']},
+    # 상현1전 (Dark Moon)
+    {'name': '달의 호흡', 'units': ['koku', 'muichiro_transparent', 'gyomei_mark']},
+    # 귀의 왕 계보 (Demon King Lineage)
+    {'name': '귀의 왕 계보', 'units': ['twin_destiny', 'yoriichi', 'tanjiro_king']},
+    # 수주의 후예 (Water Legacy)
+    {'name': '물의 계보', 'units': ['giyu_calm', 'inosuke_king', 'zenitsu_7th']},
+]
+
+SYNERGY_DPS_MULTIPLIER = 1.2
 
 ACTION_WAIT = 0
 ACTION_SUMMON = 1
@@ -222,26 +266,37 @@ SUMMON_PROBS = {1: 0.70, 2: 0.20, 3: 0.10}
 
 
 def get_normal_enemy_hp(round_num):
-    """일반 적 체력 계산 (game.js spawnEnemy 공식 그대로)"""
-    base_hp = round_num * 150  # game.js: this.round * 150
+    """일반 적 체력 계산 (Hard Mode - game.js spawnEnemy 공식)
+    하드 모드: 기본 공식 + round² × 150 + 전체 1.5배 + 90 이후 복리
+    """
+    base_hp = round_num * 200
     if round_num > 10:
         base_hp += round_num * round_num * 30
     if round_num >= 20:
         base_hp = base_hp * 1.5
+    # 하드 모드 추가 스케일링
+    if round_num > 1:
+        base_hp += round_num * round_num * 150
+    base_hp = base_hp * 1.5
+    # 90라운드 이후 지수적 증가
+    if round_num > 90:
+        base_hp = base_hp * (1.03 ** (round_num - 90))
     return int(base_hp)
 
 
 def get_kill_gold(round_num):
-    """적 처치 시 골드 보상"""
-    reward = 5 + round_num // 4
-    return min(reward, 10)
+    """적 처치 시 골드 보상 (Hard Mode - 상향)"""
+    reward = 7 + round_num // 4
+    return min(reward, 20)
 
 
 def get_required_dps(round_num):
-    """해당 라운드 생존에 필요한 대략적 DPS (적 오버플로우 방지 기준)"""
+    """해당 라운드 생존에 필요한 대략적 DPS (Hard Mode)"""
     is_boss = (round_num % GAME_CONFIG['bossInterval'] == 0)
     if is_boss:
-        boss_hp = BOSS_DATA.get(round_num, {}).get('hp', 1000)
+        boss_hp = get_boss_hp(round_num)
+        if boss_hp == 0:
+            boss_hp = 1000
         return boss_hp / float(GAME_CONFIG['roundTime'])
     else:
         enemy_hp = get_normal_enemy_hp(round_num)

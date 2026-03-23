@@ -129,6 +129,34 @@ io.on("connection", (socket) => {
       rlSocket.emit("rl_game_ready");
     }
   });
+
+  // ===============================================================
+  // [AI 대전] 브라우저 ↔ Python RL 브릿지 중계
+  // ===============================================================
+
+  // 브라우저 → Python: AI 대전 시작 요청
+  socket.on("ai_battle_start", (data) => {
+    console.log("🤖 AI 대전 요청!");
+    if (rlSocket) {
+      rlSocket.emit("ai_battle_start", data);
+    } else {
+      console.log("  RL 클라이언트 미연결 → 브라우저 로컬 시뮬레이션 사용");
+    }
+  });
+
+  // Python → 브라우저: AI 진행 상황
+  socket.on("ai_battle_state", (data) => {
+    if (socket === rlSocket) {
+      io.emit("ai_battle_state", data);
+    }
+  });
+
+  // Python → 브라우저: AI 최종 결과
+  socket.on("ai_battle_result", (data) => {
+    if (socket === rlSocket) {
+      io.emit("ai_battle_result", data);
+    }
+  });
 });
 
 const PORT = 3000;

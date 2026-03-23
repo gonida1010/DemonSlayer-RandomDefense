@@ -1,0 +1,102 @@
+# -*- coding: utf-8 -*-
+"""
+rewards_recurrent.py - RecurrentPPO 전용 리워드 설정
+
+RecurrentPPO 특성:
+  - LSTM 기반 → 과거 상태 기억 가능
+  - 연속적인 행동 패턴 학습에 강점 → 시퀀스 보상 추가
+  - 장기 전략 학습 가능 → 장기 보상 비중 높임
+  - 조합 → 배치 → 조합 연쇄 패턴 인식 가능
+"""
+
+
+# =================================================================
+# 행동별 보상 (Action Rewards)
+# =================================================================
+
+# 대기 (WAIT)
+def wait_penalty(summons_possible, empty_slots):
+    """소환 가능한데 대기하면 페널티 (LSTM은 시간 단계를 기억)"""
+    if summons_possible > 0 and empty_slots > 0:
+        return -0.015 * min(summons_possible, empty_slots)
+    return 0.0
+
+
+# 소환 (SUMMON)
+SUMMON_REWARD = 0.12
+
+
+# 배치 (PLACE)
+def place_reward(tier):
+    """배치: 티어별 점진적 보상 (LSTM이 배치 타이밍 학습)"""
+    return 0.08 * tier + 0.02 * tier * tier  # T4=0.64, T5=0.90, T6=1.20
+
+
+# 판매 (SELL)
+def sell_penalty(tier):
+    """판매: LSTM은 맥락을 볼 수 있으므로 상황별 판단 가능"""
+    return -0.08 * tier
+
+
+# 조합 (COMBINE) - RecurrentPPO의 핵심: 연쇄 조합 보너스
+def combine_reward(result_tier, consecutive_combines=0):
+    """조합: tier² + 연쇄 조합 보너스
+    LSTM이 연속 조합 패턴(소환→소환→조합→조합)을 학습하도록 유도
+    consecutive_combines: 최근 5스텝 내 연속 조합 횟수
+    """
+    base = 0.4 * result_tier * result_tier
+    # 연쇄 조합 보너스: 연속으로 조합할수록 추가 보상
+    chain_bonus = 0.3 * consecutive_combines * result_tier
+    return base + chain_bonus
+
+
+# =================================================================
+# 시뮬레이션 보상 (Simulation Rewards)
+# =================================================================
+
+# 적 처치
+ENEMY_KILL_REWARD = 0.02
+BOSS_KILL_REWARD = 12.0  # LSTM은 보스 대비 전략을 기억 가능 → 더 높은 보상
+
+# 위험도 패널티
+def danger_penalty(enemy_ratio, dt):
+    """적 누적 패널티 (LSTM이 위험 상승 추세를 감지하도록 제곱)"""
+    return -0.06 * enemy_ratio * enemy_ratio * dt
+
+
+# 라운드 생존
+def round_survival_reward(round_num):
+    """라운드 생존 보상 (LSTM: 장기 생존에 높은 가치)"""
+    base = 1.2 + round_num / 25.0
+    if round_num > 90:
+        base += (round_num - 90) * 0.15  # 90 이후 강한 보상 증가
+    return base
+
+
+# 전략 보너스 (LSTM 전용)
+def field_composition_bonus(tier_counts):
+    """필드 유닛 구성 보너스 (다양성 + 고티어 비율)
+    LSTM이 필드 구성 전략을 학습할 수 있도록 추가 보상
+    """
+    bonus = 0.0
+    unique_tiers = len([t for t, c in tier_counts.items() if c > 0])
+    bonus += unique_tiers * 0.02  # 다양성 보너스
+
+    # 고티어 비율 보너스
+    high_tier_count = sum(c for t, c in tier_counts.items() if t >= 4)
+    total = sum(tier_counts.values())
+    if total > 0:
+        bonus += (high_tier_count / total) * 0.1
+
+    return bonus
+
+
+# 게임 오버 / 보스 미처치
+GAME_OVER_PENALTY = -3.0
+BOSS_TIMEOUT_PENALTY = -3.0
+
+# 유효하지 않은 행동
+INVALID_ACTION_PENALTY = -0.01
+
+# 히든 조합 배율
+HIDDEN_COMBINE_MULTIPLIER = 1.5

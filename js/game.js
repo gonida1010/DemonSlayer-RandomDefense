@@ -16,6 +16,8 @@ let GAME_CONFIG;
 let UNIT_DATA;
 let RECIPES;
 let ENEMY_CONFIG;
+let SYNERGIES;
+let SYNERGY_DPS_MULTIPLIER;
 let game; // Phaser.Game 인스턴스
 
 // 플레이어 정보 관련
@@ -661,9 +663,9 @@ class MenuScene extends Phaser.Scene {
       .text(640, 260, "지옥\n(Hard)", { ...style, color: "#e74c3c" })
       .setOrigin(0.5);
 
-    // (3) 협동 (오른쪽 구역: x=1066 정도)
+    // (3) AI 대전 (오른쪽 구역: x=1066 정도)
     this.labelMulti = this.add
-      .text(1030, 260, "협동\n(Challenge)", { ...style, color: "#9b59b6" })
+      .text(1030, 260, "AI 대전\n(VS Agent)", { ...style, color: "#9b59b6" })
       .setOrigin(0.5);
 
     // 5. 랭킹 타이틀 및 리스트 (하단 중앙으로 배치)
@@ -769,7 +771,7 @@ class MenuScene extends Phaser.Scene {
     } else {
       this.labelMulti.setScale(1.3).setAlpha(1);
       bgTexture = "mode_multi";
-      title = "=== 협동 챌린지 랭킹 ===";
+      title = "=== AI 대전 랭킹 ===";
     }
 
     // 타이틀 텍스트 업데이트
@@ -802,21 +804,13 @@ class MenuScene extends Phaser.Scene {
   async startSelectedMode() {
     console.log(`${currentMode} 모드 선택됨`);
 
-    // 데이터를 미리 로드 (공통)
-    await loadDataForMode(currentMode);
-
     if (currentMode === "multi") {
-      // 소켓이 연결되어 있는지 확인
-      if (socket && socket.connected) {
-        socket.emit("join_game", { nickname: currentPlayerName });
-      } else {
-        // 깃허브 페이지 등 서버가 없는 환경일 때
-        alert(
-          "서버와 연결되어 있지 않습니다.\n싱글 모드(스토리/지옥)만 플레이 가능합니다.",
-        );
-      }
+      // AI 대전 모드: 하드 모드 데이터 기반으로 AI와 대결
+      await loadDataForMode("hard");
+      this.scene.start("GameScene", { isAIBattle: true });
     } else {
-      // [싱글 모드] -> 바로 시작
+      // 싱글 모드 (스토리/지옥)
+      await loadDataForMode(currentMode);
       this.scene.start("GameScene");
     }
   }
@@ -857,8 +851,13 @@ class GameScene extends Phaser.Scene {
     // 멀티 모드 여부 판단
     this.isMultiplayer = !!this.myRoomName;
 
+    // AI 대전 모드
+    this.isAIBattle = !!safeData.isAIBattle;
+    this.aiBattleState = null; // AI 진행 상황
+    this.aiBattleResult = null; // AI 최종 결과
+
     console.log(
-      `게임 초기화: Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}`,
+      `게임 초기화: Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}, AIBattle=${this.isAIBattle}`,
     );
   }
 
@@ -1813,6 +1812,13 @@ class GameScene extends Phaser.Scene {
         this.scene.start("MenuScene"); // 메뉴로 강제 이동
       });
     }
+
+    // ===================================================
+    // [AI 대전] 초기화
+    // ===================================================
+    if (this.isAIBattle) {
+      this._initAIBattle();
+    }
   }
 
   // [라운드별 배경 교체 함수]
@@ -2686,6 +2692,9 @@ class GameScene extends Phaser.Scene {
       } else if (this.round >= 90) {
         key = "boss_muzan";
         hp = ENEMY_CONFIG.types.boss_muzan.hpMult;
+        if (this.round > 90) {
+          hp = Math.floor(hp * Math.pow(1.03, this.round - 90));
+        }
         moveSpeed = 2;
       }
     } else {
@@ -2699,7 +2708,7 @@ class GameScene extends Phaser.Scene {
       if (currentMode === "hard") {
         if (this.round > 1) baseHp += this.round * this.round * 150;
         baseHp = baseHp * 1.5;
-        if (this.round > 90) baseHp = baseHp * Math.pow(1.05, this.round - 90);
+        if (this.round > 90) baseHp = baseHp * Math.pow(1.03, this.round - 90);
       }
 
       // [★수정] 멀티 모드
@@ -3508,6 +3517,34 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // 시너지 보너스 업데이트: 필드 유닛(gridX === -1) 중 활성 시너지 멤버에 플래그 설정
+  updateSynergies() {
+    if (!SYNERGIES || SYNERGIES.length === 0) return;
+
+    // 필드 유닛 키 집합
+    const fieldKeys = new Set();
+    this.units.children.iterate((u) => {
+      if (u && u.active && u.gridX === -1) {
+        fieldKeys.add(u.unitKey);
+      }
+    });
+
+    // 활성 시너지의 구성원 키 집합
+    const boostedKeys = new Set();
+    for (const syn of SYNERGIES) {
+      if (syn.units.every((k) => fieldKeys.has(k))) {
+        syn.units.forEach((k) => boostedKeys.add(k));
+      }
+    }
+
+    // 모든 유닛에 플래그 설정
+    this.units.children.iterate((u) => {
+      if (u && u.active) {
+        u.synergyBoosted = boostedKeys.has(u.unitKey);
+      }
+    });
+  }
+
   unitAttack(unit) {
     if (unit.isDragging) return; // 드래그 중 공격 중지 로직
 
@@ -3927,6 +3964,10 @@ class GameScene extends Phaser.Scene {
     // 4. 데이터 주입
     b.target = target;
     b.damage = unit.dataVal.dmg;
+    // 시너지 보너스 적용
+    if (unit.synergyBoosted) {
+      b.damage = Math.floor(b.damage * SYNERGY_DPS_MULTIPLIER);
+    }
     b.isCritical = Math.random() < 0.1;
     b.baseSpeed = bulletSpeed; // 기본 속도 저장
     b.speed = bulletSpeed * this.time.timeScale; // 배속에 비례
@@ -4188,6 +4229,12 @@ class GameScene extends Phaser.Scene {
       if (u && u.active) this.unitAttack(u);
     });
 
+    // 시너지 업데이트 (1초 간격)
+    if (!this._lastSynergyCheck || time - this._lastSynergyCheck > 1000) {
+      this._lastSynergyCheck = time;
+      this.updateSynergies();
+    }
+
     this.updateBullets();
 
     //=== 적 숫자 체크 로직 ===
@@ -4418,6 +4465,12 @@ class GameScene extends Phaser.Scene {
 
     this.physics.pause(); // 게임 멈춤
 
+    // AI 시뮬레이션 타이머 정리
+    if (this.aiSimTimer) {
+      this.aiSimTimer.destroy();
+      this.aiSimTimer = null;
+    }
+
     // 1. 배경 어둡게 (Depth를 높여서 유닛들보다 위에 오게 함)
     this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.8).setDepth(9000); // [중요] 유닛보다 훨씬 높은 숫자
 
@@ -4441,6 +4494,9 @@ class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(9001);
+
+    // AI 대전 결과 비교
+    this._showAIBattleResult();
 
     // 3. 저장 상태 텍스트
     const savingText = this.add
@@ -4512,6 +4568,265 @@ class GameScene extends Phaser.Scene {
         savingText.setColor("#ff0000");
       }
     }
+  }
+
+  // =================================================================
+  // [AI 대전] AI 시뮬레이션 메서드
+  // =================================================================
+
+  _initAIBattle() {
+    // AI 상태 패널 생성 (화면 오른쪽 상단)
+    const panelX = 1100, panelY = 10;
+    this.aiBattlePanel = this.add.container(panelX, panelY).setDepth(8000);
+
+    const bg = this.add.rectangle(0, 55, 180, 130, 0x000000, 0.75)
+      .setOrigin(0, 0).setStrokeStyle(2, 0x9b59b6);
+    this.aiBattlePanel.add(bg);
+
+    const titleText = this.add.text(90, 60, "🤖 AI 에이전트", {
+      fontFamily: "Cafe24ClassicType", fontSize: "16px",
+      color: "#9b59b6", align: "center",
+    }).setOrigin(0.5);
+    this.aiBattlePanel.add(titleText);
+
+    this.aiStatusText = this.add.text(90, 90, "시뮬레이션 준비 중...", {
+      fontFamily: "Cafe24ClassicType", fontSize: "13px",
+      color: "#ffffff", align: "center", lineSpacing: 4,
+    }).setOrigin(0.5, 0);
+    this.aiBattlePanel.add(this.aiStatusText);
+
+    // AI 시뮬레이션 시작 (서버 연결 시도 → 실패 시 JS 휴리스틱)
+    this._startAISimulation();
+  }
+
+  _startAISimulation() {
+    if (socket && socket.connected) {
+      // 서버 + Python 브릿지를 통한 AI 대전
+      socket.emit("ai_battle_start", { mode: "hard" });
+
+      socket.off("ai_battle_state");
+      socket.off("ai_battle_result");
+
+      socket.on("ai_battle_state", (data) => {
+        this.aiBattleState = data;
+        if (this.aiStatusText && this.aiStatusText.active) {
+          this.aiStatusText.setText(
+            `R${data.round}  DPS: ${(data.fieldDps || 0).toLocaleString()}\n` +
+            `유닛: ${data.fieldUnits || 0}  골드: ${data.gold || 0}`
+          );
+        }
+      });
+
+      socket.on("ai_battle_result", (data) => {
+        this.aiBattleResult = data;
+        if (this.aiStatusText && this.aiStatusText.active) {
+          this.aiStatusText.setText(
+            `게임 오버!\n최종: R${data.finalRound}\n` +
+            `DPS: ${(data.fieldDps || 0).toLocaleString()}`
+          );
+        }
+      });
+    } else {
+      // 서버 없이 JS 휴리스틱 AI 시뮬레이션
+      this._runLocalAISimulation();
+    }
+  }
+
+  _runLocalAISimulation() {
+    // 간단한 로컬 AI 시뮬레이션 (서버 없이 동작)
+    const ai = {
+      round: 1, gold: GAME_CONFIG.initialGold, lives: GAME_CONFIG.initialLives,
+      grid: [], field: [], fieldDps: 0, isGameOver: false, time: 0,
+    };
+
+    const getEnemyHp = (round) => {
+      let hp = round * 200;
+      if (round > 10) hp += round * round * 30;
+      if (round >= 20) hp *= 1.5;
+      // 하드 모드 추가
+      if (round > 1) hp += round * round * 150;
+      hp *= 1.5;
+      if (round > 90) hp *= Math.pow(1.03, round - 90);
+      return Math.floor(hp);
+    };
+
+    const summonCost = GAME_CONFIG.unitSummonCost || 150;
+    const allT1Keys = Object.keys(UNIT_DATA).filter(k => UNIT_DATA[k].tier === 1);
+    const recipeMap = {};
+    if (RECIPES) {
+      RECIPES.forEach(r => {
+        const key = [r.a, r.b].sort().join("+");
+        recipeMap[key] = r.result;
+      });
+    }
+
+    // AI 틱 (1라운드 = 약 30초, 틱당 3초 시뮬)
+    const aiTick = () => {
+      if (ai.isGameOver || this.isGameOver) return;
+
+      // 소환 (빈 그리드 슬롯이 있고 골드 있으면)
+      if (ai.gold >= summonCost && ai.grid.length < 36) {
+        const rIdx = Math.floor(Math.random() * allT1Keys.length);
+        ai.grid.push(allT1Keys[rIdx]);
+        ai.gold -= summonCost;
+      }
+
+      // 합성 시도
+      let combined = true;
+      while (combined) {
+        combined = false;
+        const counts = {};
+        ai.grid.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
+
+        for (const recipe of (RECIPES || [])) {
+          const { a, b, result } = recipe;
+          if (a === b) {
+            if ((counts[a] || 0) >= 2) {
+              // 그리드에서 2개 제거 후 결과 추가
+              let removed = 0;
+              ai.grid = ai.grid.filter(k => {
+                if (k === a && removed < 2) { removed++; return false; }
+                return true;
+              });
+              ai.grid.push(result);
+              combined = true;
+              break;
+            }
+          } else {
+            if ((counts[a] || 0) >= 1 && (counts[b] || 0) >= 1) {
+              let ra = false, rb = false;
+              ai.grid = ai.grid.filter(k => {
+                if (!ra && k === a) { ra = true; return false; }
+                if (!rb && k === b) { rb = true; return false; }
+                return true;
+              });
+              ai.grid.push(result);
+              combined = true;
+              break;
+            }
+          }
+        }
+      }
+
+      // 배치 (그리드 → 필드): 높은 티어 우선
+      while (ai.grid.length > 0 && ai.field.length < 30) {
+        // 가장 높은 티어 유닛 찾기
+        let bestIdx = 0, bestTier = 0;
+        ai.grid.forEach((k, i) => {
+          const t = UNIT_DATA[k] ? UNIT_DATA[k].tier : 0;
+          if (t > bestTier) { bestTier = t; bestIdx = i; }
+        });
+        const placed = ai.grid.splice(bestIdx, 1)[0];
+        ai.field.push(placed);
+      }
+
+      // 저티어 판매 (그리드 가득 차면 T1 판매)
+      if (ai.grid.length >= 30) {
+        const t1Idx = ai.grid.findIndex(k => UNIT_DATA[k] && UNIT_DATA[k].tier === 1);
+        if (t1Idx >= 0) {
+          ai.grid.splice(t1Idx, 1);
+          ai.gold += 50;
+        }
+      }
+
+      // DPS 계산
+      ai.fieldDps = 0;
+      ai.field.forEach(k => {
+        const ud = UNIT_DATA[k];
+        if (ud) ai.fieldDps += (ud.damage || 100) * (ud.attackSpeed || 1);
+      });
+
+      // 전투 시뮬: 라운드당 적 HP vs DPS
+      ai.time += 3; // 3초 경과
+      if (ai.time >= 30) {
+        // 라운드 종료 판정
+        const enemyHp = getEnemyHp(ai.round) * 15; // 라운드당 적 총량 추정
+        const roundDamage = ai.fieldDps * 30; // 30초간 총 데미지
+
+        if (roundDamage < enemyHp * 0.5) {
+          // DPS가 적 HP의 절반도 못 깎으면 라이프 감소
+          ai.lives -= 3;
+        }
+
+        // 골드 획득 (라운드 보상)
+        ai.gold += 100 + ai.round * 5;
+
+        // 보스 라운드 (10의 배수)
+        if (ai.round % 10 === 0) {
+          const bossHp = getEnemyHp(ai.round) * 50;
+          if (roundDamage < bossHp * 0.3) {
+            ai.lives -= 5;
+          }
+          ai.gold += 500; // 보스 보너스
+        }
+
+        ai.round++;
+        ai.time = 0;
+
+        if (ai.lives <= 0) {
+          ai.isGameOver = true;
+          ai.round--; // 마지막 클리어 라운드
+        }
+      }
+
+      // UI 업데이트
+      this.aiBattleState = {
+        round: ai.round, fieldDps: ai.fieldDps,
+        gold: ai.gold, fieldUnits: ai.field.length,
+        isGameOver: ai.isGameOver,
+      };
+
+      if (this.aiStatusText && this.aiStatusText.active) {
+        if (ai.isGameOver) {
+          this.aiStatusText.setText(
+            `게임 오버!\n최종: R${ai.round}\n` +
+            `DPS: ${ai.fieldDps.toLocaleString()}`
+          );
+          this.aiBattleResult = { finalRound: ai.round, fieldDps: ai.fieldDps };
+        } else {
+          this.aiStatusText.setText(
+            `R${ai.round}  DPS: ${ai.fieldDps.toLocaleString()}\n` +
+            `유닛: ${ai.field.length}  골드: ${ai.gold}`
+          );
+        }
+      }
+    };
+
+    // 300ms마다 AI 틱 실행 (약 배속 10x 시뮬레이션)
+    this.aiSimTimer = this.time.addEvent({
+      delay: 300,
+      callback: aiTick,
+      loop: true,
+    });
+  }
+
+  // 게임 오버 시 AI 대전 결과 비교 표시
+  _showAIBattleResult() {
+    if (!this.isAIBattle) return;
+
+    const myRound = this.round;
+    const aiRound = this.aiBattleResult
+      ? this.aiBattleResult.finalRound
+      : (this.aiBattleState ? this.aiBattleState.round : 0);
+    const aiDone = this.aiBattleResult ? true
+      : (this.aiBattleState ? this.aiBattleState.isGameOver : false);
+
+    let resultText;
+    if (!aiDone) {
+      resultText = `당신: R${myRound}  |  AI: R${aiRound} (진행 중)`;
+    } else if (myRound > aiRound) {
+      resultText = `🏆 승리! 당신: R${myRound}  vs  AI: R${aiRound}`;
+    } else if (myRound < aiRound) {
+      resultText = `💀 패배... 당신: R${myRound}  vs  AI: R${aiRound}`;
+    } else {
+      resultText = `🤝 무승부! 당신: R${myRound}  vs  AI: R${aiRound}`;
+    }
+
+    this.add.text(640, 400, resultText, {
+      fontFamily: "Cafe24ClassicType", fontSize: "28px",
+      color: "#f1c40f", stroke: "#000", strokeThickness: 5,
+      align: "center",
+    }).setOrigin(0.5).setDepth(9001);
   }
 
   // =================================================================
@@ -4845,6 +5160,8 @@ async function loadDataForMode(mode) {
   UNIT_DATA = dataModule.UNIT_DATA;
   RECIPES = dataModule.RECIPES;
   ENEMY_CONFIG = dataModule.ENEMY_CONFIG;
+  SYNERGIES = dataModule.SYNERGIES || [];
+  SYNERGY_DPS_MULTIPLIER = dataModule.SYNERGY_DPS_MULTIPLIER || 1.2;
 }
 
 // === Phaser 게임 부트스트랩 ===

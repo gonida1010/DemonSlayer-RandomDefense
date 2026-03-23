@@ -1,17 +1,20 @@
 """
-rl_bridge.py - 학습된 RL 모델로 실제 게임 제어
+rl_bridge.py - 학습된 RL 모델로 실제 게임 제어 + AI 대전
 
 학습된 모델을 로드하고 WebSocket을 통해 실제 브라우저 게임을 제어합니다.
+AI 대전 모드에서는 내부 game_env를 사용해 병렬 게임을 시뮬레이션합니다.
 
-사용법:
-  1. 서버 시작: node server.js
-  2. 브라우저에서 http://localhost:3000/?rl=true 접속
-  3. 이 스크립트 실행: python rl_bridge.py --model models/demon_slayer_final.zip
+사용법 (일반 RL 모드):
+  python rl_bridge.py --model models/ppo/demon_slayer_final.zip
+  python rl_bridge.py --model models/recurrent/demon_slayer_final.zip --algorithm recurrent
+  python rl_bridge.py --model models/dqn/demon_slayer_final.zip --algorithm dqn
 
-의존성: pip install python-socketio[client] websocket-client
+사용법 (AI 대전 지원 - 서버가 자동 호출):
+  python rl_bridge.py --model models/ppo/demon_slayer_final.zip --ai-battle
 """
 import argparse
 import time
+import threading
 import numpy as np
 
 try:
@@ -20,7 +23,8 @@ except ImportError:
     print("socketio 패키지가 필요합니다: pip install python-socketio[client] websocket-client")
     exit(1)
 
-from sb3_contrib import MaskablePPO
+from sb3_contrib import MaskablePPO, RecurrentPPO
+from stable_baselines3 import DQN
 from game_data import (
     UNIT_DATA, UNIT_KEYS, UNIT_KEY_TO_IDX, RECIPES,
     GAME_CONFIG, NUM_ACTIONS, OBS_DIM, NUM_UNIT_TYPES,
@@ -28,15 +32,40 @@ from game_data import (
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
 )
 
+ALGO_CLASSES = {
+    'ppo': MaskablePPO,
+    'recurrent': RecurrentPPO,
+    'dqn': DQN,
+}
+
+
+def _apply_dqn_mask(model, obs, mask, device='cpu'):
+    """DQN 행동 선택 시 마스크 적용 (유효하지 않은 행동의 Q값 → -inf)"""
+    import torch
+    obs_tensor = torch.as_tensor(obs).float()
+    if obs_tensor.dim() == 1:
+        obs_tensor = obs_tensor.unsqueeze(0)
+    q_values = model.q_net(obs_tensor.to(model.device))
+    q_values = q_values.detach().cpu().numpy().flatten()
+    q_values[~np.array(mask, dtype=bool)] = -np.inf
+    return int(np.argmax(q_values))
+
 
 class RLBridge:
     """학습된 모델로 실제 게임을 제어하는 브릿지"""
 
-    def __init__(self, model_path):
-        self.model = MaskablePPO.load(model_path)
+    def __init__(self, model_path, algorithm='ppo'):
+        self.algorithm = algorithm
+        cls = ALGO_CLASSES.get(algorithm, MaskablePPO)
+        self.model = cls.load(model_path)
         self.sio = socketio.Client()
         self.game_state = None
         self.game_ready = False
+        self.ai_battle_active = False
+
+        # RecurrentPPO LSTM 상태 추적
+        self.lstm_states = None
+        self.episode_start = np.ones(1, dtype=bool)
 
         self._setup_events()
 
@@ -60,15 +89,22 @@ class RLBridge:
             print("서버 연결 해제")
             self.game_ready = False
 
+        @self.sio.on('ai_battle_start')
+        def on_ai_battle_start(data):
+            print("AI 대전 요청 수신! 병렬 시뮬레이션 시작...")
+            self.ai_battle_active = True
+            thread = threading.Thread(target=self._run_ai_battle, daemon=True)
+            thread.start()
+
     def connect(self, url='http://localhost:3000'):
         print(f"서버 연결 시도: {url}")
         self.sio.connect(url)
 
     def state_to_obs(self, state):
-        """게임 상태 → 관측 벡터 변환 (game_env._get_obs() v4: 67차원)"""
+        """게임 상태 → 관측 벡터 변환 (하드 모드: round/200.0)"""
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
-        obs[0] = state.get('round', 1) / 90.0
+        obs[0] = state.get('round', 1) / 200.0
         obs[1] = min(state.get('gold', 0) / 10000.0, 1.0)
         obs[2] = max(state.get('timeRemaining', 0), 0) / 60.0
         obs[3] = min(state.get('enemyCount', 0) / state.get('maxEnemies', GAME_CONFIG['maxEnemies']), 1.0)
@@ -86,10 +122,8 @@ class RLBridge:
         empty_count = sum(1 for s in grid_state if s is None)
         obs[8] = empty_count / 36.0
 
-        # 유효 조합 수 (서버에서 계산해서 보내줌)
         obs[9] = min(state.get('validCombines', 0) / 54.0, 1.0)
 
-        # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
         for slot in grid_state:
             if slot and 'key' in slot:
@@ -118,7 +152,6 @@ class RLBridge:
         if gold >= GAME_CONFIG['unitSummonCost'] and has_empty:
             mask[ACTION_SUMMON] = True
 
-        # 그리드 유닛 카운트
         grid_counts = {}
         for slot in grid_state:
             if slot and 'key' in slot:
@@ -146,31 +179,92 @@ class RLBridge:
         """행동 인덱스 → 게임 명령 변환"""
         if action == ACTION_WAIT:
             return {'type': 'wait', 'params': {}}
-
         if action == ACTION_SUMMON:
             return {'type': 'summon', 'params': {}}
-
         if ACTION_PLACE_START <= action < ACTION_PLACE_START + NUM_UNIT_TYPES:
             key = UNIT_KEYS[action - ACTION_PLACE_START]
             return {'type': 'place', 'params': {'unitKey': key}}
-
         if ACTION_SELL_START <= action < ACTION_SELL_START + NUM_UNIT_TYPES:
             key = UNIT_KEYS[action - ACTION_SELL_START]
             return {'type': 'sell', 'params': {'unitKey': key}}
-
         if ACTION_COMBINE_START <= action < ACTION_COMBINE_START + len(RECIPES):
             recipe = RECIPES[action - ACTION_COMBINE_START]
             return {'type': 'combine', 'params': {'a': recipe['a'], 'b': recipe['b']}}
-
         return {'type': 'wait', 'params': {}}
 
-    def run(self, decision_interval=0.02):
-        """메인 루프: 상태 수신 → 행동 결정 → 명령 전송
+    def predict_action(self, obs, mask):
+        """알고리즘별 행동 예측"""
+        if self.algorithm == 'ppo':
+            action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
+        elif self.algorithm == 'recurrent':
+            action, self.lstm_states = self.model.predict(
+                obs, state=self.lstm_states,
+                episode_start=self.episode_start,
+                deterministic=True
+            )
+            self.episode_start = np.zeros(1, dtype=bool)
+        elif self.algorithm == 'dqn':
+            action = _apply_dqn_mask(self.model, obs, mask)
+        else:
+            action, _ = self.model.predict(obs, deterministic=True)
+        return int(action)
 
-        decision_interval: 행동 간격(초). 5배속 기준 0.02초 권장.
-        게임 내 3초(학습 STEP_DURATION) = 5배속 시 실시간 0.6초
-        → 0.02초 간격이면 0.6초에 30번 행동 가능
-        """
+    # =====================================================================
+    # AI 대전: 내부 game_env 시뮬레이션
+    # =====================================================================
+    def _run_ai_battle(self):
+        """병렬 game_env 시뮬레이션으로 AI 대전 수행"""
+        from game_env import DemonSlayerEnv
+
+        algo_reward = {
+            'ppo': 'rewards_ppo',
+            'recurrent': 'rewards_recurrent',
+            'dqn': 'rewards_dqn',
+        }
+        env = DemonSlayerEnv(reward_module=algo_reward.get(self.algorithm, 'rewards_ppo'))
+        obs, info = env.reset()
+
+        # LSTM 상태 초기화 (RecurrentPPO용)
+        self.lstm_states = None
+        self.episode_start = np.ones(1, dtype=bool)
+
+        step_count = 0
+        done = False
+
+        while not done and self.ai_battle_active and self.sio.connected:
+            mask = env.action_masks()
+            action = self.predict_action(obs, mask)
+            obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            step_count += 1
+
+            # 5스텝마다 진행 상황 브라우저에 전송
+            if step_count % 5 == 0 or done:
+                summary = env.get_game_summary()
+                self.sio.emit('ai_battle_state', {
+                    'round': summary['round'],
+                    'fieldDps': summary['field_dps'],
+                    'gold': summary['gold'],
+                    'fieldUnits': summary['field_units'],
+                    'isGameOver': done,
+                    'steps': step_count,
+                })
+
+        # 최종 결과 전송
+        final = env.get_game_summary()
+        self.sio.emit('ai_battle_result', {
+            'finalRound': final['round'],
+            'fieldDps': final['field_dps'],
+            'steps': step_count,
+        })
+        print(f"AI 대전 완료: Round {final['round']}, DPS={final['field_dps']:,.0f}")
+        self.ai_battle_active = False
+
+    # =====================================================================
+    # 일반 RL 모드: 브라우저 게임 제어
+    # =====================================================================
+    def run(self, decision_interval=0.02):
+        """메인 루프: 상태 수신 → 행동 결정 → 명령 전송"""
         print("게임 브라우저가 준비될 때까지 대기...")
         print("  브라우저에서 http://localhost:3000/?rl=true 접속하세요")
 
@@ -179,11 +273,15 @@ class RLBridge:
 
         print("=" * 55)
         print("  에이전트가 게임을 제어합니다!")
+        print(f"  알고리즘: {self.algorithm.upper()}")
         print("  종료: Ctrl+C")
         print("=" * 55)
 
         step = 0
         last_round = 0
+        self.lstm_states = None
+        self.episode_start = np.ones(1, dtype=bool)
+
         while self.sio.connected:
             if not self.game_state:
                 time.sleep(0.05)
@@ -198,7 +296,6 @@ class RLBridge:
                 print(f"{'=' * 55}")
                 break
 
-            # 새 라운드 알림
             cur_round = state.get('round', 0)
             if cur_round != last_round:
                 dps = state.get('totalFieldDps', 0)
@@ -211,13 +308,12 @@ class RLBridge:
 
             obs = self.state_to_obs(state)
             mask = self.get_action_mask(state)
-            action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
+            action = self.predict_action(obs, mask)
 
-            command = self.action_to_command(int(action))
+            command = self.action_to_command(action)
             self.sio.emit('rl_action', command)
 
             step += 1
-            # 행동 로그 (WAIT 제외)
             if command['type'] != 'wait':
                 params_str = ', '.join(f"{k}={v}" for k, v in command.get('params', {}).items())
                 print(f"  [{step:>5}] {command['type'].upper():>7}  {params_str}")
@@ -227,21 +323,32 @@ class RLBridge:
         print("RL 브릿지 종료")
 
     def disconnect(self):
+        self.ai_battle_active = False
         if self.sio.connected:
             self.sio.disconnect()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='RL 브릿지 - 학습된 모델로 실제 게임 제어')
+    parser = argparse.ArgumentParser(description='RL 브릿지 - 학습된 모델로 게임 제어 / AI 대전')
     parser.add_argument('--model', type=str, required=True, help='학습된 모델 경로 (.zip)')
+    parser.add_argument('--algorithm', type=str, default='ppo',
+                        choices=['ppo', 'recurrent', 'dqn'],
+                        help='알고리즘 (기본: ppo)')
     parser.add_argument('--url', type=str, default='http://localhost:3000', help='서버 URL')
     parser.add_argument('--interval', type=float, default=0.5, help='결정 간격 (초)')
+    parser.add_argument('--ai-battle', action='store_true',
+                        help='AI 대전 대기 모드 (서버에서 요청 시 시뮬레이션 수행)')
     args = parser.parse_args()
 
-    bridge = RLBridge(args.model)
+    bridge = RLBridge(args.model, algorithm=args.algorithm)
     try:
         bridge.connect(args.url)
-        bridge.run(decision_interval=args.interval)
+        if args.ai_battle:
+            print("AI 대전 대기 모드. 브라우저에서 AI 대전 시작 대기 중...")
+            while bridge.sio.connected:
+                time.sleep(1)
+        else:
+            bridge.run(decision_interval=args.interval)
     except KeyboardInterrupt:
         print("\n사용자 중단")
     finally:

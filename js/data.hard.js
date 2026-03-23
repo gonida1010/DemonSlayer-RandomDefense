@@ -894,3 +894,22 @@ export const ENEMY_CONFIG = {
     },
   },
 };
+
+// =====================================================================
+// 시너지 (Synergy) - T6 유닛 조합 보너스
+// 3명이 필드에 모두 배치되면 해당 유닛 공격력 1.2배
+// =====================================================================
+export const SYNERGIES = [
+  { name: "카마도 혈통", units: ["tanjiro_final", "nezuko_sun", "tanjiro_king"] },
+  { name: "동기조의 유대", units: ["tanjiro_final", "inosuke_king", "zenitsu_7th"] },
+  { name: "상현1 토벌대", units: ["gyomei_mark", "sanemi_wind_god", "muichiro_transparent"] },
+  { name: "쌍둥이의 인연", units: ["yoriichi", "koku", "twin_destiny"] },
+  { name: "귀살대 핵심", units: ["tanjiro_final", "giyu_calm", "rengoku_legend"] },
+  { name: "주 연합전선", units: ["giyu_calm", "sanemi_wind_god", "love_snake_couple"] },
+  { name: "불꽃의 의지", units: ["rengoku_legend", "nezuko_sun", "love_snake_couple"] },
+  { name: "달의 호흡", units: ["koku", "muichiro_transparent", "gyomei_mark"] },
+  { name: "귀의 왕 계보", units: ["twin_destiny", "yoriichi", "tanjiro_king"] },
+  { name: "물의 계보", units: ["giyu_calm", "inosuke_king", "zenitsu_7th"] },
+];
+
+export const SYNERGY_DPS_MULTIPLIER = 1.2;

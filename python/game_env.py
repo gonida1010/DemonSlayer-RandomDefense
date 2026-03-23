@@ -1,12 +1,12 @@
 """
-game_env.py - 귀멸의 칼날 랜덤 디펜스 강화학습 환경 v4
-Gymnasium 호환 환경 (MaskablePPO 지원)
+game_env.py - 귀멸의 칼날 랜덤 디펜스 강화학습 환경 (하드 모드 - 무한 라운드)
+Gymnasium 호환 환경 (MaskablePPO / RecurrentPPO / DQN 지원)
 
-v4 핵심 변경:
-- 관측 67차원 복원 (개별 유닛 카운트 → 조합 가치 평가 핵심)
-- 조합 = 지배적 보상 (0.5 × tier²: T4=8.0, T5=12.5, T6=18.0)
-- 배치/소환 = 최소 보상 (배치보다 조합 동기 부여)
-- 위험도 연속 패널티 + 적 처치 미세 보상 유지
+하드 모드 핵심:
+- 무한 라운드 (90라운드 클리어 없음, 최대한 오래 생존)
+- 하드 모드 적 체력 공식 (노멀 대비 2~3배)
+- 90라운드 이후 지수적 난이도 상승
+- 알고리즘별 리워드 파일 분리 (rewards_ppo/dqn/recurrent)
 """
 import gymnasium as gym
 import numpy as np
@@ -18,16 +18,17 @@ from game_data import (
     NUM_ACTIONS, OBS_DIM, NUM_UNIT_TYPES,
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
-    get_normal_enemy_hp, get_kill_gold,
+    get_normal_enemy_hp, get_kill_gold, get_boss_hp,
+    HIDDEN_RECIPE_INDICES, SYNERGIES, SYNERGY_DPS_MULTIPLIER,
 )
 
 
 class DemonSlayerEnv(gym.Env):
     """
-    귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 v4
+    귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 (하드 모드, 무한 라운드)
 
     관측 공간 (67차원):
-      [0]  round / 90
+      [0]  round / 200 (무한 모드: 200으로 정규화)
       [1]  gold / 10000
       [2]  time_remaining / 60
       [3]  enemy_count / max_enemies
@@ -49,19 +50,28 @@ class DemonSlayerEnv(gym.Env):
 
     metadata = {'render_modes': []}
 
-    # 에이전트 결정 간격 (초) - 이 시간만큼 게임이 진행됨
-    STEP_DURATION = 2.0  # 실제 게임에서의 빠른 판단을 반영
-    TICK_SIZE = 0.5  # 시뮬레이션 틱 크기 (초)
-    GRID_SIZE = 36   # 6x6 그리드
-    COMBAT_EFFICIENCY = 0.75  # 투사체 비행/사거리 손실 반영 (75%)
+    STEP_DURATION = 2.0
+    TICK_SIZE = 0.5
+    GRID_SIZE = 36
+    COMBAT_EFFICIENCY = 0.85
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, reward_module='rewards_ppo',
+                 auto_remap_invalid_actions=False):
         super().__init__()
         self.action_space = spaces.Discrete(NUM_ACTIONS)
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(OBS_DIM,), dtype=np.float32
         )
         self.render_mode = render_mode
+        self.auto_remap_invalid_actions = auto_remap_invalid_actions
+
+        # 리워드 모듈 동적 로드
+        import importlib
+        self.rewards = importlib.import_module(reward_module)
+
+        # 연쇄 조합 추적 (RecurrentPPO용)
+        self._recent_combines = 0
+        self.invalid_action_remaps = 0
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -70,20 +80,17 @@ class DemonSlayerEnv(gym.Env):
         self.gold = GAME_CONFIG['initialGold']
         self.time_remaining = float(GAME_CONFIG['roundTime'])
 
-        # 그리드: 36칸, None = 빈칸, str = unit_key
         self.grid = [None] * self.GRID_SIZE
-        # 필드: 배치된 유닛 키 리스트
         self.field_units = []
-        # 적 리스트: [{'hp': int, 'max_hp': int, 'is_boss': bool}]
         self.enemies = []
 
         self.game_over = False
-        self.game_cleared = False
         self.boss_spawned = False
-        self.spawn_acc = 0.0     # 스폰 누적 시간
+        self.spawn_acc = 0.0
         self.total_steps = 0
+        self._recent_combines = 0
+        self.invalid_action_remaps = 0
 
-        # 캐시
         self._field_dps_cache = 0.0
         self._field_boss_dps_cache = 0.0
         self._update_field_dps()
@@ -95,17 +102,18 @@ class DemonSlayerEnv(gym.Env):
     # =================================================================
 
     def step(self, action):
-        assert not (self.game_over or self.game_cleared), "Episode ended"
+        assert not self.game_over, "Episode ended"
         self.total_steps += 1
 
-        # 1. 행동 실행
-        action_reward = self._execute_action(int(action))
+        # 연쇄 조합 카운터 감쇠
+        if int(action) < ACTION_COMBINE_START or int(action) > ACTION_COMBINE_START + NUM_RECIPES - 1:
+            self._recent_combines = max(0, self._recent_combines - 1)
 
-        # 2. 게임 시뮬레이션 (STEP_DURATION 초)
+        action_reward = self._execute_action(int(action))
         sim_reward = self._simulate(self.STEP_DURATION)
 
         reward = action_reward + sim_reward
-        terminated = self.game_over or self.game_cleared
+        terminated = self.game_over
         truncated = False
 
         info = {
@@ -113,7 +121,7 @@ class DemonSlayerEnv(gym.Env):
             'gold': self.gold,
             'field_dps': self._field_dps_cache,
             'enemy_count': len(self.enemies),
-            'game_cleared': self.game_cleared,
+            'invalid_action_remaps': self.invalid_action_remaps,
         }
 
         return self._get_obs(), reward, terminated, truncated, info
@@ -154,13 +162,13 @@ class DemonSlayerEnv(gym.Env):
         return mask
 
     # =================================================================
-    # 관측 생성 (v4: 67차원 개별 유닛 카운트 복원)
+    # 관측 생성 (67차원, 무한 모드 정규화)
     # =================================================================
 
     def _get_obs(self):
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
-        obs[0] = self.round / 90.0
+        obs[0] = min(self.round / 200.0, 1.0)  # 무한 모드: 200으로 정규화
         obs[1] = min(self.gold / 10000.0, 1.0)
         obs[2] = max(self.time_remaining, 0.0) / 60.0
         obs[3] = min(len(self.enemies) / GAME_CONFIG['maxEnemies'], 1.0)
@@ -196,10 +204,26 @@ class DemonSlayerEnv(gym.Env):
         return obs
 
     # =================================================================
-    # 행동 실행 (v4: 조합 지배적 보상)
+    # 행동 실행 (리워드 모듈 사용)
     # =================================================================
 
     def _execute_action(self, action):
+        if action < 0 or action >= NUM_ACTIONS:
+            return self.rewards.INVALID_ACTION_PENALTY
+
+        mask = self.action_masks()
+        if not mask[action]:
+            if not self.auto_remap_invalid_actions:
+                return self.rewards.INVALID_ACTION_PENALTY
+
+            remapped_action = self._select_fallback_action(mask)
+            self.invalid_action_remaps += 1
+            remap_penalty = self.rewards.INVALID_ACTION_PENALTY * 0.5
+            return remap_penalty + self._execute_valid_action(remapped_action)
+
+        return self._execute_valid_action(action)
+
+    def _execute_valid_action(self, action):
         if action == ACTION_WAIT:
             return self._wait_penalty()
 
@@ -218,31 +242,97 @@ class DemonSlayerEnv(gym.Env):
             recipe_idx = action - ACTION_COMBINE_START
             return self._combine(recipe_idx)
 
-        return -0.01
+        return self.rewards.INVALID_ACTION_PENALTY
+
+    def _select_fallback_action(self, mask):
+        """마스킹이 없는 알고리즘용 유효 행동 보정.
+
+        초반 학습이 invalid action에 매몰되지 않도록,
+        현재 상태에서 가장 무난한 유효 행동으로 치환한다.
+        """
+        # 초반에는 배치 우선: DPS를 빠르게 올려 라운드 1~3 생존을 안정화
+        if self._field_dps_cache <= 0 or len(self.field_units) < 4:
+            best_place = self._best_place_action(mask)
+            if best_place is not None:
+                return best_place
+
+        best_combine = self._best_combine_action(mask)
+        if best_combine is not None:
+            return best_combine
+
+        best_place = self._best_place_action(mask)
+        if best_place is not None:
+            return best_place
+
+        if mask[ACTION_SUMMON]:
+            return ACTION_SUMMON
+
+        if mask[ACTION_WAIT]:
+            return ACTION_WAIT
+
+        sell_slice = mask[ACTION_SELL_START:ACTION_SELL_START + NUM_UNIT_TYPES]
+        sell_indices = np.flatnonzero(sell_slice)
+        if len(sell_indices) > 0:
+            # 마지막 수단: 가장 낮은 티어부터 판매
+            sell_idx = min(
+                sell_indices,
+                key=lambda idx: (
+                    UNIT_DATA[UNIT_KEYS[idx]]['tier'],
+                    UNIT_DATA[UNIT_KEYS[idx]]['dps'],
+                ),
+            )
+            return ACTION_SELL_START + int(sell_idx)
+
+        return ACTION_WAIT
+
+    def _best_place_action(self, mask):
+        place_slice = mask[ACTION_PLACE_START:ACTION_PLACE_START + NUM_UNIT_TYPES]
+        place_indices = np.flatnonzero(place_slice)
+        if len(place_indices) == 0:
+            return None
+
+        best_idx = max(
+            place_indices,
+            key=lambda idx: (
+                UNIT_DATA[UNIT_KEYS[idx]]['tier'],
+                UNIT_DATA[UNIT_KEYS[idx]]['dps'],
+            ),
+        )
+        return ACTION_PLACE_START + int(best_idx)
+
+    def _best_combine_action(self, mask):
+        combine_slice = mask[ACTION_COMBINE_START:ACTION_COMBINE_START + NUM_RECIPES]
+        combine_indices = np.flatnonzero(combine_slice)
+        if len(combine_indices) == 0:
+            return None
+
+        best_idx = max(
+            combine_indices,
+            key=lambda idx: (
+                UNIT_DATA[RECIPES[idx]['result']]['tier'],
+                1 if RECIPES[idx].get('hidden', False) else 0,
+                UNIT_DATA[RECIPES[idx]['result']]['dps'],
+            ),
+        )
+        return ACTION_COMBINE_START + int(best_idx)
 
     def _wait_penalty(self):
-        """WAIT 패널티: 소환 가능한데 대기하면 가벼운 패널티"""
         cost = GAME_CONFIG['unitSummonCost']
         summons_possible = self.gold // cost
         has_empty = sum(1 for s in self.grid if s is None)
-
-        if summons_possible > 0 and has_empty > 0:
-            return -0.02 * min(summons_possible, has_empty)
-        return 0.0
+        return self.rewards.wait_penalty(summons_possible, has_empty)
 
     def _summon(self):
-        """유닛 소환: 재료 확보를 격려 (조합의 전제조건)"""
         cost = GAME_CONFIG['unitSummonCost']
         if self.gold < cost:
-            return -0.01
+            return self.rewards.INVALID_ACTION_PENALTY
 
         empty_indices = [i for i, s in enumerate(self.grid) if s is None]
         if not empty_indices:
-            return -0.01
+            return self.rewards.INVALID_ACTION_PENALTY
 
         self.gold -= cost
 
-        # 확률에 따라 티어 결정 (JS와 동일)
         roll = self.np_random.integers(1, 101)
         if roll <= 10:
             tier = 3
@@ -251,20 +341,16 @@ class DemonSlayerEnv(gym.Env):
         else:
             tier = 1
 
-        # 해당 티어에서 랜덤 유닛 선택
         pool = TIER_POOL[tier]
         unit_key = pool[self.np_random.integers(0, len(pool))]
-
-        # 랜덤 빈칸에 배치
         slot = empty_indices[self.np_random.integers(0, len(empty_indices))]
         self.grid[slot] = unit_key
 
-        return 0.15  # 조합 재료 확보 유도
+        return self.rewards.SUMMON_REWARD
 
     def _place(self, unit_key):
-        """배치: 의도적으로 낮은 보상 (조합 > 즉시 배치 유도)"""
         if unit_key not in self.grid:
-            return -0.01
+            return self.rewards.INVALID_ACTION_PENALTY
 
         idx = self.grid.index(unit_key)
         self.grid[idx] = None
@@ -272,69 +358,71 @@ class DemonSlayerEnv(gym.Env):
         self._update_field_dps()
 
         tier = UNIT_DATA[unit_key]['tier']
-        # T1=0.1, T2=0.2, ..., T6=0.6 (조합 보상 대비 매우 작음)
-        return 0.1 * tier
+        return self.rewards.place_reward(tier)
 
     def _sell(self, unit_key):
-        """판매: 티어 비례 선형 패널티"""
         if unit_key not in self.grid:
-            return -0.01
+            return self.rewards.INVALID_ACTION_PENALTY
 
         idx = self.grid.index(unit_key)
         self.grid[idx] = None
         tier = UNIT_DATA[unit_key]['tier']
         sell_price = tier * 50
         self.gold += sell_price
-        return -0.1 * tier  # T1:-0.1 ~ T6:-0.6
+        return self.rewards.sell_penalty(tier)
 
     def _combine(self, recipe_idx):
-        """조합: tier² 스케일 (지배적 보상 신호)"""
         if recipe_idx < 0 or recipe_idx >= NUM_RECIPES:
-            return -0.01
+            return self.rewards.INVALID_ACTION_PENALTY
 
         recipe = RECIPES[recipe_idx]
         a, b, result = recipe['a'], recipe['b'], recipe['result']
 
-        # 재료 확인
         if a == b:
             if self.grid.count(a) < 2:
-                return -0.01
+                return self.rewards.INVALID_ACTION_PENALTY
             idx_a = self.grid.index(a)
             self.grid[idx_a] = None
             idx_b = self.grid.index(a)
             self.grid[idx_b] = None
         else:
             if a not in self.grid or b not in self.grid:
-                return -0.01
+                return self.rewards.INVALID_ACTION_PENALTY
             idx_a = self.grid.index(a)
             self.grid[idx_a] = None
             idx_b = self.grid.index(b)
             self.grid[idx_b] = None
 
-        # 결과물 생성 (첫 번째 빈칸에)
         empty_indices = [i for i, s in enumerate(self.grid) if s is None]
         if empty_indices:
             self.grid[empty_indices[0]] = result
         else:
-            # 빈칸 없으면 필드에 직접 배치
             self.field_units.append(result)
             self._update_field_dps()
 
-        # 보상: 0.5 × tier² (조합이 지배적 보상 신호)
-        # T2=2.0, T3=4.5, T4=8.0, T5=12.5, T6=18.0
         result_tier = UNIT_DATA[result]['tier']
-        return 0.5 * result_tier * result_tier
+        self._recent_combines += 1
+
+        # 히든 레시피 보너스 (1.5x)
+        is_hidden = recipe_idx in HIDDEN_RECIPE_INDICES
+        hidden_mult = self.rewards.HIDDEN_COMBINE_MULTIPLIER if is_hidden else 1.0
+
+        # 리워드 모듈이 consecutive_combines 인자를 지원하면 전달
+        import inspect
+        sig = inspect.signature(self.rewards.combine_reward)
+        if len(sig.parameters) > 1:
+            return self.rewards.combine_reward(result_tier, self._recent_combines) * hidden_mult
+        return self.rewards.combine_reward(result_tier) * hidden_mult
 
     # =================================================================
     # 게임 시뮬레이션
     # =================================================================
 
     def _simulate(self, duration):
-        """주어진 시간만큼 게임 시뮬레이션 진행"""
         total_reward = 0.0
         remaining = duration
 
-        while remaining > 0 and not self.game_over and not self.game_cleared:
+        while remaining > 0 and not self.game_over:
             dt = min(self.TICK_SIZE, remaining)
             total_reward += self._tick(dt)
             remaining -= dt
@@ -342,7 +430,6 @@ class DemonSlayerEnv(gym.Env):
         return total_reward
 
     def _tick(self, dt):
-        """한 틱(dt초)의 게임 로직 실행"""
         reward = 0.0
         is_boss_round = (self.round % GAME_CONFIG['bossInterval'] == 0)
 
@@ -359,25 +446,25 @@ class DemonSlayerEnv(gym.Env):
                     self.spawn_acc -= interval
                     self._spawn_normal_enemy()
 
-        # --- 2. 전투 (DPS 적용) ---
+        # --- 2. 전투 ---
         reward += self._apply_combat(dt)
 
-        # --- 3. 위험도 패널티 (적 누적 시 연속 손해) ---
+        # --- 3. 위험도 패널티 ---
         if self.enemies:
             danger = len(self.enemies) / GAME_CONFIG['maxEnemies']
-            reward -= 0.05 * danger * danger * dt
+            reward += self.rewards.danger_penalty(danger, dt)
 
         # --- 4. 시간 경과 ---
         self.time_remaining -= dt
 
-        # --- 5. 라운드 종료 체크 ---
+        # --- 5. 라운드 종료 ---
         if self.time_remaining <= 0:
             reward += self._process_round_end()
 
-        # --- 6. 적 수 초과 체크 ---
+        # --- 6. 적 수 초과 ---
         if len(self.enemies) > GAME_CONFIG['maxEnemies']:
             self.game_over = True
-            reward -= 3.0
+            reward += self.rewards.GAME_OVER_PENALTY
 
         return reward
 
@@ -391,9 +478,9 @@ class DemonSlayerEnv(gym.Env):
         })
 
     def _spawn_boss(self):
-        """보스 생성"""
-        if self.round in BOSS_DATA:
-            boss_hp = BOSS_DATA[self.round]['hp']
+        """보스 생성 (무한 모드: 90 이후도 스케일링)"""
+        boss_hp = get_boss_hp(self.round)
+        if boss_hp > 0:
             self.enemies.append({
                 'hp': boss_hp,
                 'max_hp': boss_hp,
@@ -401,13 +488,7 @@ class DemonSlayerEnv(gym.Env):
             })
 
     def _apply_combat(self, dt):
-        """
-        DPS 기반 전투: 투사체 비행/사거리 손실 반영
-        실제 게임에서는 투사체가 날아가서 맞아야 데미지 적용되므로
-        시뮬레이션 DPS의 75%만 실제 적용
-        """
         reward = 0.0
-
         has_boss = any(e['is_boss'] for e in self.enemies)
         raw_dps = self._field_boss_dps_cache if has_boss else self._field_dps_cache
         total_dps = raw_dps * self.COMBAT_EFFICIENCY
@@ -416,7 +497,6 @@ class DemonSlayerEnv(gym.Env):
         if damage_pool <= 0 or not self.enemies:
             return reward
 
-        # 약한 적부터 공격 (효율적 처치)
         self.enemies.sort(key=lambda e: (not e['is_boss'], e['hp']))
 
         killed = []
@@ -434,39 +514,36 @@ class DemonSlayerEnv(gym.Env):
             self.enemies.remove(enemy)
             if enemy['is_boss']:
                 self.gold += 1000
-                reward += 10.0  # 보스킬 보상
-                # 90라운드 보스(무잔) 처치 = 스토리 클리어
-                if self.round >= 90:
-                    self.game_cleared = True
-                    reward += 50.0  # 클리어 보상
+                reward += self.rewards.BOSS_KILL_REWARD
             else:
                 self.gold += get_kill_gold(self.round)
-                reward += 0.02  # 소량 적 처치 보상 (~0.9/라운드)
+                reward += self.rewards.ENEMY_KILL_REWARD
 
         return reward
 
     def _process_round_end(self):
-        """라운드 종료 처리"""
+        """라운드 종료 처리 (무한 모드: 클리어 없음)"""
         reward = 0.0
         is_boss_round = (self.round % GAME_CONFIG['bossInterval'] == 0)
         boss_alive = any(e['is_boss'] for e in self.enemies)
 
         if is_boss_round and boss_alive:
-            # 보스 미처치 → 게임오버
             self.game_over = True
-            reward -= 3.0
+            reward += self.rewards.BOSS_TIMEOUT_PENALTY
         else:
-            # 다음 라운드로
             self.round += 1
             self.time_remaining = float(GAME_CONFIG['roundTime'])
             self.boss_spawned = False
             self.spawn_acc = 0.0
-            # 라운드 생존 보상: 완만한 증가 (조합 보상 대비 작게)
-            # R2=1.07, R10=1.33, R25=1.83, R50=2.67, R90=4.0
-            reward += 1.0 + self.round / 30.0
+            reward += self.rewards.round_survival_reward(self.round)
 
-            if self.round > 90:
-                self.game_over = True
+            # RecurrentPPO 전용: 필드 구성 보너스
+            if hasattr(self.rewards, 'field_composition_bonus'):
+                tier_counts = {}
+                for key in self.field_units:
+                    t = UNIT_DATA[key]['tier']
+                    tier_counts[t] = tier_counts.get(t, 0) + 1
+                reward += self.rewards.field_composition_bonus(tier_counts)
 
         return reward
 
@@ -488,16 +565,31 @@ class DemonSlayerEnv(gym.Env):
         return 0.5 + 0.5 * min(1.0, unit_range / 200.0)
 
     def _update_field_dps(self):
-        """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 분리)"""
+        """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 분리, 시너지 적용)"""
+        # 시너지 보너스 적용 대상 유닛 키 집합
+        boosted = self._get_synergy_boosted_units()
+
         raw_dps = 0.0
         boss_dps = 0.0
         for key in self.field_units:
             d = UNIT_DATA[key]
             dps = d['dps']
+            if key in boosted:
+                dps *= SYNERGY_DPS_MULTIPLIER
             raw_dps += dps
             boss_dps += dps * self._range_efficiency(d['range'])
         self._field_dps_cache = raw_dps           # 일반 적 대상
         self._field_boss_dps_cache = boss_dps     # 보스 대상
+
+    def _get_synergy_boosted_units(self):
+        """활성된 시너지의 구성원 유닛 키 집합 반환"""
+        field_set = set(self.field_units)
+        boosted = set()
+        for synergy in SYNERGIES:
+            units = synergy['units']
+            if all(u in field_set for u in units):
+                boosted.update(units)
+        return boosted
 
     # =================================================================
     # 유틸리티
@@ -529,12 +621,16 @@ class DemonSlayerEnv(gym.Env):
 gym.register(
     id='DemonSlayerDefense-v0',
     entry_point='game_env:DemonSlayerEnv',
+    kwargs={'reward_module': 'rewards_ppo'},
 )
 
 
 if __name__ == '__main__':
-    # 간단한 테스트: 랜덤 에이전트로 1 에피소드 실행
-    env = DemonSlayerEnv()
+    import sys
+    reward_mod = sys.argv[1] if len(sys.argv) > 1 else 'rewards_ppo'
+    print(f"리워드 모듈: {reward_mod}")
+
+    env = DemonSlayerEnv(reward_module=reward_mod)
     obs, info = env.reset(seed=42)
     print(f"초기 상태: {env.get_game_summary()}")
 
@@ -563,5 +659,4 @@ if __name__ == '__main__':
 
     summary = env.get_game_summary()
     print(f"\n게임 종료! Steps={steps} Round={summary['round']} "
-          f"Cleared={info.get('game_cleared', False)} "
           f"Total Reward={total_reward:.1f}")

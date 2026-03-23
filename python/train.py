@@ -21,6 +21,7 @@ import os
 import sys
 import glob
 import re
+import time
 import argparse
 import numpy as np
 
@@ -71,50 +72,133 @@ def make_env(seed=0, reward_module='rewards_ppo', use_masker=True,
 
 
 # =====================================================================
-# 커스텀 콜백: 학습 메트릭 로깅
+# 커스텀 콜백: 학습 메트릭 로깅 + 베스트 모델 저장
 # =====================================================================
 class GameMetricsCallback(BaseCallback):
-    """에피소드 종료 시 게임 진행 상황 로깅"""
+    """에피소드 종료 시 게임 진행 상황 로깅 + 베스트 모델 자동 저장"""
 
-    def __init__(self, verbose=0):
+    def __init__(self, save_dir, algorithm='ppo', verbose=0):
         super().__init__(verbose)
+        self.save_dir = save_dir
+        self.algorithm = algorithm
         self.episode_rounds = []
+        self.episode_rewards = []
         self.episode_remaps = []
         self.episode_count = 0
         self.best_avg_round = 0
+        self.best_avg_reward = -float('inf')
+        self.best_max_round = 0
+        self.best_score = -float('inf')  # 종합 점수 (라운드 + 리워드)
+        self.train_start_time = None
+        self.total_timesteps_target = 0
+
+    def _on_training_start(self):
+        self.train_start_time = time.time()
+        self.total_timesteps_target = self.locals.get('total_timesteps', 0)
 
     def _on_step(self):
         for info in self.locals.get('infos', []):
             if 'episode' in info:
                 self.episode_count += 1
                 ep_round = info.get('round', 0)
+                ep_reward = info['episode']['r']
                 self.episode_rounds.append(ep_round)
+                self.episode_rewards.append(ep_reward)
                 self.episode_remaps.append(info.get('invalid_action_remaps', 0))
 
                 if len(self.episode_rounds) >= 100:
-                    recent = self.episode_rounds[-100:]
-                    avg_round = np.mean(recent)
-                    max_round = np.max(recent)
+                    recent_rounds = self.episode_rounds[-100:]
+                    recent_rewards = self.episode_rewards[-100:]
+                    avg_round = np.mean(recent_rounds)
+                    max_round = np.max(recent_rounds)
+                    avg_reward = np.mean(recent_rewards)
                     avg_remaps = np.mean(self.episode_remaps[-100:])
 
                     self.logger.record('game/avg_round_100', avg_round)
                     self.logger.record('game/max_round_100', max_round)
+                    self.logger.record('game/avg_reward_100', avg_reward)
                     self.logger.record('game/avg_invalid_remaps_100', avg_remaps)
                     self.logger.record('game/total_episodes', self.episode_count)
 
-                    if avg_round > self.best_avg_round:
+                    # 베스트 모델 판정: 종합 점수 = avg_round * 10 + avg_reward
+                    score = avg_round * 10 + avg_reward
+                    is_new_best = False
+
+                    if score > self.best_score:
+                        self.best_score = score
                         self.best_avg_round = avg_round
+                        self.best_avg_reward = avg_reward
+                        is_new_best = True
+
+                    if max_round > self.best_max_round:
+                        self.best_max_round = max_round
+                        if not is_new_best:
+                            is_new_best = True  # 최고 라운드 갱신도 저장
+
+                    if is_new_best:
+                        best_path = os.path.join(self.save_dir, 'best_model')
+                        self.model.save(best_path)
                         self.logger.record('game/best_avg_round', self.best_avg_round)
+                        self.logger.record('game/best_avg_reward', self.best_avg_reward)
+                        self.logger.record('game/best_max_round', self.best_max_round)
+                        self.logger.record('game/best_score', self.best_score)
 
                 if self.episode_count % cfg.PRINT_INTERVAL == 0:
-                    recent = self.episode_rounds[-50:]
-                    recent_remaps = self.episode_remaps[-50:]
-                    print(f"  [Episode {self.episode_count}] "
-                          f"Avg Round: {np.mean(recent):.1f} | "
-                          f"Max Round: {np.max(recent)} | "
-                          f"Avg Remaps: {np.mean(recent_remaps):.1f}")
+                    recent_r = self.episode_rounds[-100:]
+                    recent_rew = self.episode_rewards[-100:]
+                    recent_remaps = self.episode_remaps[-100:]
+                    avg_r = np.mean(recent_r)
+                    max_r = np.max(recent_r)
+                    avg_rew = np.mean(recent_rew)
+
+                    # 시간 & 진행률 계산
+                    elapsed = time.time() - self.train_start_time if self.train_start_time else 0
+                    current_steps = self.num_timesteps
+                    total_target = self.total_timesteps_target
+
+                    if current_steps > 0 and elapsed > 0 and total_target > 0:
+                        progress = current_steps / total_target * 100
+                        steps_per_sec = current_steps / elapsed
+                        remaining_steps = total_target - current_steps
+                        eta_sec = remaining_steps / steps_per_sec if steps_per_sec > 0 else 0
+                        eta_str = _format_time(eta_sec)
+                        elapsed_str = _format_time(elapsed)
+                    else:
+                        progress = 0
+                        eta_str = "계산 중..."
+                        elapsed_str = "0s"
+
+                    print(f"\n{'='*65}")
+                    print(f"  [{self.algorithm.upper()}] Episode {self.episode_count:,} | "
+                          f"Step {current_steps:,}/{total_target:,} ({progress:.1f}%)")
+                    print(f"  경과: {elapsed_str} | 예상 잔여: {eta_str}")
+                    print(f"  ─── 최근 100 에피소드 ─────────────────────────")
+                    print(f"  평균 라운드: {avg_r:.1f} | 최고 라운드: {max_r} | "
+                          f"평균 리워드: {avg_rew:.1f}")
+                    if recent_remaps:
+                        print(f"  평균 Remaps: {np.mean(recent_remaps):.1f}")
+                    print(f"  ─── 베스트 모델 ──────────────────────────────")
+                    print(f"  Best 평균 라운드: {self.best_avg_round:.1f} | "
+                          f"Best 최고 라운드: {self.best_max_round} | "
+                          f"Best 평균 리워드: {self.best_avg_reward:.1f}")
+                    print(f"  Best Score: {self.best_score:.1f} | "
+                          f"저장: {self.save_dir}/best_model.zip")
+                    print(f"{'='*65}")
 
         return True
+
+
+def _format_time(seconds):
+    """초를 읽기 좋은 시간 문자열로 변환"""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        m, s = divmod(int(seconds), 60)
+        return f"{m}m {s}s"
+    else:
+        h, remainder = divmod(int(seconds), 3600)
+        m, s = divmod(remainder, 60)
+        return f"{h}h {m}m {s}s"
 
 
 # =====================================================================
@@ -246,12 +330,13 @@ def train_ppo(args, timesteps, device):
             },
         )
 
-    callbacks = _build_callbacks(save_dir, n_envs)
+    callbacks = _build_callbacks(save_dir, n_envs, algorithm='ppo')
     _run_learning(model, timesteps, callbacks)
 
     final_path = os.path.join(save_dir, 'demon_slayer_final')
     model.save(final_path)
-    print(f"\n  모델 저장: {final_path}.zip")
+    print(f"\n  버스트 모델: {save_dir}/best_model.zip")
+    print(f"  최종 모델: {final_path}.zip")
     env.close()
     return final_path
 
@@ -320,12 +405,13 @@ def train_recurrent(args, timesteps, device):
             },
         )
 
-    callbacks = _build_callbacks(save_dir, n_envs)
+    callbacks = _build_callbacks(save_dir, n_envs, algorithm='recurrent')
     _run_learning(model, timesteps, callbacks)
 
     final_path = os.path.join(save_dir, 'demon_slayer_final')
     model.save(final_path)
-    print(f"\n  모델 저장: {final_path}.zip")
+    print(f"\n  버스트 모델: {save_dir}/best_model.zip")
+    print(f"  최종 모델: {final_path}.zip")
     env.close()
     return final_path
 
@@ -383,12 +469,13 @@ def train_dqn(args, timesteps, device):
             },
         )
 
-    callbacks = _build_callbacks(save_dir, 1)
+    callbacks = _build_callbacks(save_dir, 1, algorithm='dqn')
     _run_learning(model, timesteps, callbacks)
 
     final_path = os.path.join(save_dir, 'demon_slayer_final')
     model.save(final_path)
-    print(f"\n  모델 저장: {final_path}.zip")
+    print(f"\n  버스트 모델: {save_dir}/best_model.zip")
+    print(f"  최종 모델: {final_path}.zip")
     env.close()
     return final_path
 
@@ -408,10 +495,10 @@ def _resolve_resume(resume_arg, save_dir):
     return resume_arg
 
 
-def _build_callbacks(save_dir, n_envs):
+def _build_callbacks(save_dir, n_envs, algorithm='ppo'):
     """콜백 빌드"""
     return CallbackList([
-        GameMetricsCallback(verbose=1),
+        GameMetricsCallback(save_dir=save_dir, algorithm=algorithm, verbose=1),
         CheckpointCallback(
             save_freq=max(cfg.CHECKPOINT_FREQ // max(n_envs, 1), 1000),
             save_path=save_dir,

@@ -13,6 +13,52 @@ app.get("/", (req, res) => {
 });
 
 // ===============================================================
+// [API] 학습된 모델 목록 조회
+// ===============================================================
+const fs = require("fs");
+
+app.get("/api/models", (req, res) => {
+  const modelsDir = path.join(__dirname, "python", "models");
+  const models = [];
+
+  if (!fs.existsSync(modelsDir)) {
+    return res.json({ models: [] });
+  }
+
+  // 알고리즘별 폴더 탐색 (ppo, recurrent, dqn)
+  const algoDirs = fs.readdirSync(modelsDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+
+  for (const algo of algoDirs) {
+    const algoPath = path.join(modelsDir, algo);
+    const files = fs.readdirSync(algoPath)
+      .filter(f => f.endsWith(".zip"))
+      .sort();
+
+    for (const file of files) {
+      const filePath = path.join("python", "models", algo, file);
+      const stat = fs.statSync(path.join(algoPath, file));
+      const isBest = file === "best_model.zip";
+      const isFinal = file === "demon_slayer_final.zip";
+
+      models.push({
+        algorithm: algo,
+        filename: file,
+        path: filePath,
+        size: (stat.size / (1024 * 1024)).toFixed(1) + " MB",
+        modified: stat.mtime.toISOString(),
+        isBest,
+        isFinal,
+        label: isBest ? `[BEST] ${algo}` : isFinal ? `[FINAL] ${algo}` : `${algo}/${file}`,
+      });
+    }
+  }
+
+  res.json({ models });
+});
+
+// ===============================================================
 // [RL Bridge] 강화학습 브릿지
 // ===============================================================
 let rlSocket = null; // RL 클라이언트 소켓
@@ -127,6 +173,21 @@ io.on("connection", (socket) => {
     gameSocket = socket;
     if (rlSocket) {
       rlSocket.emit("rl_game_ready");
+    }
+  });
+
+  // 모델 변경 요청 (브라우저 → Python)
+  socket.on("rl_load_model", (data) => {
+    console.log(`🤖 모델 변경 요청: ${data?.path}`);
+    if (rlSocket) {
+      rlSocket.emit("rl_load_model", data);
+    }
+  });
+
+  // 모델 변경 완료 (Python → 브라우저)
+  socket.on("rl_model_loaded", (data) => {
+    if (socket === rlSocket && gameSocket) {
+      gameSocket.emit("rl_model_loaded", data);
     }
   });
 

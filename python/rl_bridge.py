@@ -89,6 +89,30 @@ class RLBridge:
             print("서버 연결 해제")
             self.game_ready = False
 
+        @self.sio.on('rl_load_model')
+        def on_load_model(data):
+            model_path = data.get('path', '')
+            algo = data.get('algorithm', self.algorithm)
+            print(f"\n모델 변경 요청: {model_path} ({algo})")
+            try:
+                cls = ALGO_CLASSES.get(algo, MaskablePPO)
+                self.model = cls.load(model_path)
+                self.algorithm = algo
+                self.lstm_states = None
+                self.episode_start = np.ones(1, dtype=bool)
+                print(f"  모델 로드 성공!")
+                self.sio.emit('rl_model_loaded', {
+                    'success': True,
+                    'path': model_path,
+                    'algorithm': algo,
+                })
+            except Exception as e:
+                print(f"  모델 로드 실패: {e}")
+                self.sio.emit('rl_model_loaded', {
+                    'success': False,
+                    'error': str(e),
+                })
+
         @self.sio.on('ai_battle_start')
         def on_ai_battle_start(data):
             print("AI 대전 요청 수신! 병렬 시뮬레이션 시작...")

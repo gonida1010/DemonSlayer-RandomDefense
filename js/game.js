@@ -2838,9 +2838,9 @@ class GameScene extends Phaser.Scene {
       let reward = 0;
       if (isBoss) {
         reward = 1000;
-        // 90라운드 이후 하드/멀티/AI대전: 2라운드당 1.1배
+        // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배
         if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle")) {
-          const scaleTicks = Math.floor((this.round - 90) / 2);
+          const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
         this.showGoldEffect(ex, ey, `+${reward}G`, "#ff0000", 30);
@@ -2850,7 +2850,7 @@ class GameScene extends Phaser.Scene {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
           if (this.round > 90) {
-            const scaleTicks = Math.floor((this.round - 90) / 2);
+            const scaleTicks = Math.floor((this.round - 90) / 5);
             reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
           }
         } else {
@@ -4100,9 +4100,9 @@ class GameScene extends Phaser.Scene {
       let reward = 0;
       if (e.isBoss) {
         reward = 1000;
-        // 90라운드 이후 하드/멀티/AI대전: 2라운드당 1.1배 추가 보상
+        // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배 추가 보상
         if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle)) {
-          const scaleTicks = Math.floor((this.round - 90) / 2);
+          const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
         this.showGoldEffect(e.x, e.y, `+${reward}G`, "#ff0000", 30);
@@ -4116,9 +4116,9 @@ class GameScene extends Phaser.Scene {
         if (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
-          // 90라운드 이후: 2라운드당 1.1배 추가 보상
+          // 90라운드 이후: 5라운드당 1.1배 추가 보상
           if (this.round > 90) {
-            const scaleTicks = Math.floor((this.round - 90) / 2);
+            const scaleTicks = Math.floor((this.round - 90) / 5);
             reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
           }
         }
@@ -4806,9 +4806,9 @@ class GameScene extends Phaser.Scene {
 
         // 골드 획득 (라운드 보상)
         let roundGold = 100 + ai.round * 5;
-        // 90라운드 이후 2라운드당 1.1배 보상 스케일링
+        // 90라운드 이후 5라운드당 1.1배 보상 스케일링
         if (ai.round > 90) {
-          const scaleTicks = Math.floor((ai.round - 90) / 2);
+          const scaleTicks = Math.floor((ai.round - 90) / 5);
           roundGold = Math.floor(roundGold * Math.pow(1.1, scaleTicks));
         }
         ai.gold += roundGold;
@@ -4821,7 +4821,7 @@ class GameScene extends Phaser.Scene {
           }
           let bossGold = 500;
           if (ai.round > 90) {
-            const scaleTicks = Math.floor((ai.round - 90) / 2);
+            const scaleTicks = Math.floor((ai.round - 90) / 5);
             bossGold = Math.floor(bossGold * Math.pow(1.1, scaleTicks));
           }
           ai.gold += bossGold; // 보스 보너스
@@ -5080,7 +5080,7 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  /** RL 모드 초기화: 소켓 이벤트 등록 + 시각적 오버레이 */
+  /** RL 모드 초기화: 소켓 이벤트 등록 + 시각적 오버레이 + 모델 선택 */
   initRLMode() {
     if (!socket) return;
 
@@ -5091,12 +5091,13 @@ class GameScene extends Phaser.Scene {
     this.rlOverlay = {
       lastAction: "WAIT",
       actionCount: 0,
+      currentModel: "없음",
     };
 
     const overlayX = 20;
     const overlayY = 10;
     const panelWidth = 320;
-    const panelHeight = 140;
+    const panelHeight = 160;
 
     // 반투명 배경 패널
     this.rlPanel = this.add
@@ -5121,6 +5122,22 @@ class GameScene extends Phaser.Scene {
       })
       .setDepth(10000)
       .setScrollFactor(0);
+
+    // 모델 선택 버튼
+    const btnModelSelect = this.add
+      .text(overlayX + panelWidth - 10, overlayY + 8, "📂 모델 선택", {
+        fontSize: "13px",
+        fontFamily: "monospace",
+        color: "#f1c40f",
+        backgroundColor: "#333333",
+        padding: { x: 6, y: 3 },
+      })
+      .setOrigin(1, 0)
+      .setDepth(10001)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+
+    btnModelSelect.on("pointerdown", () => this._showModelSelector());
 
     // 상태 텍스트
     this.rlStatusText = this.add
@@ -5172,6 +5189,7 @@ class GameScene extends Phaser.Scene {
             : 0;
 
           const lines = [
+            `Model: ${this.rlOverlay.currentModel}`,
             `Action: ${this.rlOverlay.lastAction}`,
             `Steps: ${this.rlOverlay.actionCount}  |  Round: ${this.round || 0}`,
             `Field: ${fieldCount} units  |  Grid: ${gridFilled}/36`,
@@ -5190,6 +5208,123 @@ class GameScene extends Phaser.Scene {
         this.rlTitle.setText("🤖 AI AGENT ● LIVE");
         this.rlTitle.setColor("#00ff00");
       }
+    });
+
+    // 모델 로드 완료 이벤트
+    socket.on("rl_model_loaded", (data) => {
+      if (data.success) {
+        const displayName = data.path.split("/").pop().replace(".zip", "");
+        this.rlOverlay.currentModel = `${data.algorithm}/${displayName}`;
+        console.log(`모델 로드 완료: ${data.path}`);
+      } else {
+        console.error(`모델 로드 실패: ${data.error}`);
+        alert(`모델 로드 실패: ${data.error}`);
+      }
+    });
+  }
+
+  /** 모델 선택 팝업 */
+  async _showModelSelector() {
+    // 기존 팝업 제거
+    if (this.modelSelectorContainer) {
+      this.modelSelectorContainer.destroy();
+    }
+
+    // 서버에서 모델 목록 가져오기
+    let models = [];
+    try {
+      const resp = await fetch("/api/models");
+      const data = await resp.json();
+      models = data.models || [];
+    } catch (e) {
+      console.error("모델 목록 로드 실패:", e);
+      return;
+    }
+
+    if (models.length === 0) {
+      alert("학습된 모델이 없습니다.\npython/models/ 폴더에 모델을 저장하세요.");
+      return;
+    }
+
+    const popW = 500, popH = Math.min(60 + models.length * 38, 500);
+    const popX = 640 - popW / 2, popY = 360 - popH / 2;
+
+    this.modelSelectorContainer = this.add.container(0, 0).setDepth(11000);
+
+    // 배경 어둡게
+    const dimBg = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.6)
+      .setInteractive();
+    this.modelSelectorContainer.add(dimBg);
+
+    // 팝업 배경
+    const popBg = this.add.rectangle(640, 360, popW, popH, 0x1a1a2e)
+      .setStrokeStyle(2, 0x00ff88);
+    this.modelSelectorContainer.add(popBg);
+
+    // 타이틀
+    const title = this.add.text(640, popY + 15, "📂 모델 선택", {
+      fontSize: "18px", fontFamily: "monospace",
+      color: "#00ff88", fontStyle: "bold",
+    }).setOrigin(0.5);
+    this.modelSelectorContainer.add(title);
+
+    // 닫기 버튼
+    const closeBtn = this.add.text(popX + popW - 15, popY + 10, "✕", {
+      fontSize: "20px", fontFamily: "monospace",
+      color: "#ff4444",
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    closeBtn.on("pointerdown", () => {
+      this.modelSelectorContainer.destroy();
+      this.modelSelectorContainer = null;
+    });
+    this.modelSelectorContainer.add(closeBtn);
+
+    // 모델 리스트
+    const startY = popY + 50;
+    const listH = popH - 60;
+    models.forEach((m, i) => {
+      const itemY = startY + i * 38;
+      if (itemY - startY > listH - 30) return; // 넘치면 스킵
+
+      let labelColor = "#ffffff";
+      let labelText = `${m.algorithm}/${m.filename}`;
+      if (m.isBest) {
+        labelColor = "#f1c40f";
+        labelText = `⭐ [BEST] ${m.algorithm}  (${m.size})`;
+      } else if (m.isFinal) {
+        labelColor = "#2ecc71";
+        labelText = `✅ [FINAL] ${m.algorithm}  (${m.size})`;
+      } else {
+        labelText = `   ${m.algorithm}/${m.filename}  (${m.size})`;
+      }
+
+      const btn = this.add.text(640, itemY, labelText, {
+        fontSize: "14px", fontFamily: "monospace",
+        color: labelColor,
+        backgroundColor: "#2d2d44",
+        padding: { x: 10, y: 6 },
+        fixedWidth: popW - 40,
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+      btn.on("pointerover", () => btn.setBackgroundColor("#3d3d5c"));
+      btn.on("pointerout", () => btn.setBackgroundColor("#2d2d44"));
+      btn.on("pointerdown", () => {
+        // 모델 로드 요청
+        socket.emit("rl_load_model", {
+          path: m.path,
+          algorithm: m.algorithm,
+        });
+        this.modelSelectorContainer.destroy();
+        this.modelSelectorContainer = null;
+      });
+
+      this.modelSelectorContainer.add(btn);
+    });
+
+    // 배경 클릭으로 닫기
+    dimBg.on("pointerdown", () => {
+      this.modelSelectorContainer.destroy();
+      this.modelSelectorContainer = null;
     });
   }
 }

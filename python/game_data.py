@@ -285,9 +285,22 @@ def get_normal_enemy_hp(round_num):
 
 
 def get_kill_gold(round_num):
-    """적 처치 시 골드 보상 (Hard Mode - 상향)"""
+    """적 처치 시 골드 보상 (Hard Mode - 상향, 90라운드 이후 2라운드당 1.1배)"""
     reward = 7 + round_num // 4
-    return min(reward, 20)
+    reward = min(reward, 20)
+    if round_num > 90:
+        scale_ticks = (round_num - 90) // 2
+        reward = int(reward * (1.1 ** scale_ticks))
+    return reward
+
+
+def get_boss_kill_gold(round_num):
+    """보스 처치 시 골드 보상 (90라운드 이후 2라운드당 1.1배)"""
+    reward = 1000
+    if round_num > 90:
+        scale_ticks = (round_num - 90) // 2
+        reward = int(reward * (1.1 ** scale_ticks))
+    return reward
 
 
 def get_required_dps(round_num):

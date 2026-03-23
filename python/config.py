@@ -20,19 +20,19 @@ config.py - 강화학습 설정 파일 (하드 모드 + 다중 알고리즘)
 # =============================================================
 # 1. 공통 설정
 # =============================================================
-TOTAL_TIMESTEPS = 30_000_000      # 총 학습 타임스텝
+TOTAL_TIMESTEPS = 50_000_000      # 총 학습 타임스텝
 N_ENVS = 6                        # 병렬 환경 수 (CPU 코어에 맞게 조정)
-EVAL_EPISODES = 200                # 평가 에피소드 수
+EVAL_EPISODES = 500                # 평가 에피소드 수
 DEVICE = "auto"                   # "auto", "cuda", "cpu"
 PROGRESS_BAR = True               # tqdm 진행률 바
-PRINT_INTERVAL = 1000              # 에피소드 통계 출력 간격
+PRINT_INTERVAL = 2000              # 에피소드 통계 출력 간격
 
 # =============================================================
 # 2. 저장 / 로깅 경로 (알고리즘별 분리)
 # =============================================================
 SAVE_DIR_BASE = "./models"        # models/ppo/, models/recurrent/, models/dqn/
 LOG_DIR_BASE = "./tb_logs"        # tb_logs/ppo/, tb_logs/recurrent/, tb_logs/dqn/
-CHECKPOINT_FREQ = 50_000          # 체크포인트 저장 간격
+CHECKPOINT_FREQ = 1000000          # 체크포인트 저장 간격
 
 # =============================================================
 # 3. MaskablePPO 하이퍼파라미터

@@ -18,7 +18,7 @@ from game_data import (
     NUM_ACTIONS, OBS_DIM, NUM_UNIT_TYPES,
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
-    get_normal_enemy_hp, get_kill_gold, get_boss_hp,
+    get_normal_enemy_hp, get_kill_gold, get_boss_hp, get_boss_kill_gold,
     HIDDEN_RECIPE_INDICES, SYNERGIES, SYNERGY_DPS_MULTIPLIER,
 )
 
@@ -513,7 +513,7 @@ class DemonSlayerEnv(gym.Env):
         for enemy in killed:
             self.enemies.remove(enemy)
             if enemy['is_boss']:
-                self.gold += 1000
+                self.gold += get_boss_kill_gold(self.round)
                 reward += self.rewards.BOSS_KILL_REWARD
             else:
                 self.gold += get_kill_gold(self.round)

@@ -22,7 +22,7 @@ let game; // Phaser.Game 인스턴스
 
 // 플레이어 정보 관련
 let currentPlayerName = "이름없음";
-let currentMode = "normal"; // normal | hard | multi
+let currentMode = "normal"; // normal | hard | multi | aibattle
 let partnerName = "";
 let myRoomName = null;
 
@@ -100,6 +100,8 @@ function getScoreCollectionName(mode) {
     return "scores_hard";
   } else if (mode === "multi") {
     return "scores_multi"; // 협동 모드 전용 컬렉션
+  } else if (mode === "aibattle") {
+    return "scores_aibattle"; // AI 대전 전용 컬렉션
   } else {
     return "scores_normal";
   }
@@ -652,20 +654,25 @@ class MenuScene extends Phaser.Scene {
       shadow: { offsetX: 2, offsetY: 2, color: "#000", blur: 4, fill: true },
     };
 
-    // [화면 3분할 텍스트 배치]
-    // (1) 스토리 (왼쪽 구역: x=213 정도)
+    // [화면 4분할 텍스트 배치]
+    // (1) 스토리 (x=160)
     this.labelNormal = this.add
-      .text(250, 260, "스토리\n(Normal)", { ...style, color: "#3498db" })
+      .text(160, 260, "스토리\n(Normal)", { ...style, fontSize: "28px", color: "#3498db" })
       .setOrigin(0.5);
 
-    // (2) 지옥 (중앙 구역: x=640)
+    // (2) 지옥 (x=480)
     this.labelHard = this.add
-      .text(640, 260, "지옥\n(Hard)", { ...style, color: "#e74c3c" })
+      .text(480, 260, "지옥\n(Hard)", { ...style, fontSize: "28px", color: "#e74c3c" })
       .setOrigin(0.5);
 
-    // (3) AI 대전 (오른쪽 구역: x=1066 정도)
+    // (3) 협동 (x=800)
     this.labelMulti = this.add
-      .text(1030, 260, "AI 대전\n(VS Agent)", { ...style, color: "#9b59b6" })
+      .text(800, 260, "협동\n(Multi)", { ...style, fontSize: "28px", color: "#2ecc71" })
+      .setOrigin(0.5);
+
+    // (4) AI 대전 (x=1120)
+    this.labelAIBattle = this.add
+      .text(1120, 260, "AI 대전\n(VS Agent)", { ...style, fontSize: "28px", color: "#9b59b6" })
       .setOrigin(0.5);
 
     // 5. 랭킹 타이틀 및 리스트 (하단 중앙으로 배치)
@@ -688,18 +695,22 @@ class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    // 6. [중요] 클릭 영역 (Zone) 3분할
-    // 화면 너비 1280을 3등분 -> 약 426px 씩
+    // 6. [중요] 클릭 영역 (Zone) 4분할
+    // 화면 너비 1280을 4등분 -> 320px 씩
     const zoneNormal = this.add
-      .zone(0, 0, 426, 720)
+      .zone(0, 0, 320, 720)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true });
     const zoneHard = this.add
-      .zone(426, 0, 426, 720)
+      .zone(320, 0, 320, 720)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true });
     const zoneMulti = this.add
-      .zone(852, 0, 428, 720)
+      .zone(640, 0, 320, 720)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
+    const zoneAIBattle = this.add
+      .zone(960, 0, 320, 720)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true });
 
@@ -707,12 +718,14 @@ class MenuScene extends Phaser.Scene {
     zoneNormal.on("pointerover", () => this.setMode("normal"));
     zoneHard.on("pointerover", () => this.setMode("hard"));
     zoneMulti.on("pointerover", () => this.setMode("multi"));
+    zoneAIBattle.on("pointerover", () => this.setMode("aibattle"));
 
     // 클릭 시 게임 시작 함수 호출
     const startFunc = () => this.startSelectedMode();
     zoneNormal.on("pointerdown", startFunc);
     zoneHard.on("pointerdown", startFunc);
     zoneMulti.on("pointerdown", startFunc);
+    zoneAIBattle.on("pointerdown", startFunc);
 
     // 초기 설정
     this.setMode(currentMode || "normal");
@@ -756,6 +769,7 @@ class MenuScene extends Phaser.Scene {
     resetScale(this.labelNormal);
     resetScale(this.labelHard);
     resetScale(this.labelMulti);
+    resetScale(this.labelAIBattle);
 
     let bgTexture = "menu_bg";
     let title = "";
@@ -768,9 +782,13 @@ class MenuScene extends Phaser.Scene {
       this.labelHard.setScale(1.3).setAlpha(1);
       bgTexture = "mode_hard";
       title = "=== 지옥 모드 랭킹 ===";
-    } else {
+    } else if (mode === "multi") {
       this.labelMulti.setScale(1.3).setAlpha(1);
       bgTexture = "mode_multi";
+      title = "=== 협동 모드 랭킹 ===";
+    } else if (mode === "aibattle") {
+      this.labelAIBattle.setScale(1.3).setAlpha(1);
+      bgTexture = "mode_hard";
       title = "=== AI 대전 랭킹 ===";
     }
 
@@ -805,6 +823,14 @@ class MenuScene extends Phaser.Scene {
     console.log(`${currentMode} 모드 선택됨`);
 
     if (currentMode === "multi") {
+      // 협동 모드: 서버 매칭 요청
+      if (socket && socket.connected) {
+        await loadDataForMode("multi");
+        socket.emit("join_game", { nickname: currentPlayerName });
+      } else {
+        alert("서버에 연결되어 있지 않습니다!");
+      }
+    } else if (currentMode === "aibattle") {
       // AI 대전 모드: 하드 모드 데이터 기반으로 AI와 대결
       await loadDataForMode("hard");
       this.scene.start("GameScene", { isAIBattle: true });
@@ -2047,7 +2073,7 @@ class GameScene extends Phaser.Scene {
       .setOrigin(0.5);
     btnPause.on("pointerdown", () => this.togglePause());
 
-    // (4) 2배속 버튼 기능
+    // (4) 배속 버튼 기능 (1x → 2x → 3x → 5x)
     const btnSpeed = this.add
       .rectangle(370, 690, 200, 45, 0x95a5a6)
       .setInteractive({ useHandCursor: true });
@@ -2117,17 +2143,22 @@ class GameScene extends Phaser.Scene {
   toggleSpeed() {
     // 멀티 모드라면 -> 서버에 "속도 바꿔줘" 요청
     if (this.isMultiplayer) {
-      const nextSpeed = this.time.timeScale > 1 ? 1.0 : 2.0;
+      const speeds = [1, 2, 3, 5];
+      const currentIdx = speeds.indexOf(this.time.timeScale);
+      const nextIdx = (currentIdx + 1) % speeds.length;
       socket.emit("game_state_change", {
         room: this.myRoomName,
         type: "speed",
-        value: nextSpeed,
+        value: speeds[nextIdx],
       });
       return; // 내 거 바로 실행 안 함 (서버 응답 오면 실행)
     }
 
-    // 싱글 모드면 기존 로직 실행
-    this.applySpeedChange(this.time.timeScale > 1 ? 1.0 : 2.0);
+    // 싱글 모드: 1x → 2x → 3x → 5x → 1x 순환
+    const speeds = [1, 2, 3, 5];
+    const currentIdx = speeds.indexOf(this.time.timeScale);
+    const nextIdx = (currentIdx + 1) % speeds.length;
+    this.applySpeedChange(speeds[nextIdx]);
   }
 
   // [신규] 실제 속도 변경 로직 분리
@@ -2807,10 +2838,25 @@ class GameScene extends Phaser.Scene {
       let reward = 0;
       if (isBoss) {
         reward = 1000;
-        this.showGoldEffect(ex, ey, "+1000G", "#ff0000", 30);
+        // 90라운드 이후 하드/멀티/AI대전: 2라운드당 1.1배
+        if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle")) {
+          const scaleTicks = Math.floor((this.round - 90) / 2);
+          reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
+        }
+        this.showGoldEffect(ex, ey, `+${reward}G`, "#ff0000", 30);
       } else {
-        reward = 5 + Math.floor(this.round / 4);
-        if (reward > 10) reward = 10;
+        // 멀티/하드 모드 보상
+        if (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle") {
+          reward = 7 + Math.floor(this.round / 4);
+          if (reward > 20) reward = 20;
+          if (this.round > 90) {
+            const scaleTicks = Math.floor((this.round - 90) / 2);
+            reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
+          }
+        } else {
+          reward = 5 + Math.floor(this.round / 4);
+          if (reward > 10) reward = 10;
+        }
       }
 
       this.gold += reward;
@@ -4054,17 +4100,27 @@ class GameScene extends Phaser.Scene {
       let reward = 0;
       if (e.isBoss) {
         reward = 1000;
-        this.showGoldEffect(e.x, e.y, "+1000G", "#ff0000", 30);
+        // 90라운드 이후 하드/멀티/AI대전: 2라운드당 1.1배 추가 보상
+        if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle)) {
+          const scaleTicks = Math.floor((this.round - 90) / 2);
+          reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
+        }
+        this.showGoldEffect(e.x, e.y, `+${reward}G`, "#ff0000", 30);
         if (currentMode === "normal" && this.round === 90) {
           console.log("스토리 모드 클리어!");
           this.gameClear();
           return;
         }
       } else {
-        // [하드 모드 & 멀티 모드] 보상 상향
-        if (currentMode === "hard" || currentMode === "multi") {
+        // [하드 모드 & 멀티 모드 & AI 대전] 보상 상향
+        if (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
+          // 90라운드 이후: 2라운드당 1.1배 추가 보상
+          if (this.round > 90) {
+            const scaleTicks = Math.floor((this.round - 90) / 2);
+            reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
+          }
         }
         // [노멀 모드]
         else {
@@ -4749,7 +4805,13 @@ class GameScene extends Phaser.Scene {
         }
 
         // 골드 획득 (라운드 보상)
-        ai.gold += 100 + ai.round * 5;
+        let roundGold = 100 + ai.round * 5;
+        // 90라운드 이후 2라운드당 1.1배 보상 스케일링
+        if (ai.round > 90) {
+          const scaleTicks = Math.floor((ai.round - 90) / 2);
+          roundGold = Math.floor(roundGold * Math.pow(1.1, scaleTicks));
+        }
+        ai.gold += roundGold;
 
         // 보스 라운드 (10의 배수)
         if (ai.round % 10 === 0) {
@@ -4757,7 +4819,12 @@ class GameScene extends Phaser.Scene {
           if (roundDamage < bossHp * 0.3) {
             ai.lives -= 5;
           }
-          ai.gold += 500; // 보스 보너스
+          let bossGold = 500;
+          if (ai.round > 90) {
+            const scaleTicks = Math.floor((ai.round - 90) / 2);
+            bossGold = Math.floor(bossGold * Math.pow(1.1, scaleTicks));
+          }
+          ai.gold += bossGold; // 보스 보너스
         }
 
         ai.round++;

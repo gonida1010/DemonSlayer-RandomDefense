@@ -2133,25 +2133,13 @@ class GameScene extends Phaser.Scene {
     const synergyPanelWidth = 220;
     const synergyPanelHeight = Math.max(64, (SYNERGIES || []).length * 26 + 46);
 
-    this.synergyPanelBg = this.add
-      .rectangle(
-        synergyPanelX + synergyPanelWidth / 2,
-        synergyPanelY + synergyPanelHeight / 2,
-        synergyPanelWidth,
-        synergyPanelHeight,
-        0x030712,
-        0.34,
-      )
-      .setOrigin(0.5)
-      .setDepth(114)
-      .setScrollFactor(0)
-      .setStrokeStyle(1, 0x8b95a7, 0.35);
+    // 배경 없이 텍스트만 표시
 
     this.synergyPanelTitle = this.add
       .text(
         synergyPanelX + synergyPanelWidth - 10,
         synergyPanelY + 8,
-        "시너지 효과",
+        "SYNERGIE",
         {
           fontFamily: "Cafe24ClassicType",
           fontSize: "24px",

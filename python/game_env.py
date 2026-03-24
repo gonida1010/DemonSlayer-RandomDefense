@@ -629,6 +629,12 @@ class DemonSlayerEnv(gym.Env):
             danger = len(self.enemies) / GAME_CONFIG['maxEnemies']
             reward += self.rewards.danger_penalty(danger, dt)
 
+        # --- 3.5. 그리드 방치 패널티 ---
+        if hasattr(self.rewards, 'grid_idle_penalty'):
+            grid_tiers = [UNIT_DATA[s]['tier'] for s in self.grid if s is not None]
+            if grid_tiers:
+                reward += self.rewards.grid_idle_penalty(grid_tiers, dt)
+
         # --- 4. 시간 경과 ---
         self.time_remaining -= dt
 

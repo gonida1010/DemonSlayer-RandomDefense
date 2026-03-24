@@ -219,8 +219,12 @@ def get_boss_hp(round_num):
 # 2 ~ 58: PLACE(unit_keys[i-2])
 # 59 ~ 115: SELL(unit_keys[i-59])
 # 116 ~ 169: COMBINE(recipes[i-116])
-NUM_ACTIONS = 1 + 1 + NUM_UNIT_TYPES + NUM_UNIT_TYPES + NUM_RECIPES  # 170
-OBS_DIM = 10 + NUM_UNIT_TYPES  # 67 (v4: 개별 유닛 카운트 복원)
+# 170: PLACE_BEST_DPS
+# 171: COMBINE_BEST_TIER
+# 172: SUMMON_UNTIL_FULL
+OBS_STRATEGY_DIM = 6
+OBS_UNIT_COUNT_START = 10 + OBS_STRATEGY_DIM
+OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 73
 
 # =====================================================================
 # 시너지 (Synergy) - T6 유닛 조합 보너스
@@ -259,7 +263,11 @@ ACTION_PLACE_END = 2 + NUM_UNIT_TYPES - 1            # 58
 ACTION_SELL_START = 2 + NUM_UNIT_TYPES                # 59
 ACTION_SELL_END = 2 + 2 * NUM_UNIT_TYPES - 1         # 115
 ACTION_COMBINE_START = 2 + 2 * NUM_UNIT_TYPES         # 116
-ACTION_COMBINE_END = NUM_ACTIONS - 1                   # 169
+ACTION_COMBINE_END = ACTION_COMBINE_START + NUM_RECIPES - 1  # 169
+ACTION_MACRO_PLACE_BEST = ACTION_COMBINE_END + 1             # 170
+ACTION_MACRO_COMBINE_BEST = ACTION_MACRO_PLACE_BEST + 1      # 171
+ACTION_MACRO_SUMMON_ALL = ACTION_MACRO_COMBINE_BEST + 1      # 172
+NUM_ACTIONS = ACTION_MACRO_SUMMON_ALL + 1                    # 173
 
 # 소환 확률 (JS 코드와 동일)
 SUMMON_PROBS = {1: 0.70, 2: 0.20, 3: 0.10}

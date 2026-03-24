@@ -22,7 +22,7 @@ def wait_penalty(summons_possible, empty_slots):
 
 
 # 소환 (SUMMON)
-SUMMON_REWARD = 0.15  # 조합 재료 확보 유도
+SUMMON_REWARD = 0.04  # 행동 보상 비중 축소
 
 
 # 배치 (PLACE)
@@ -33,16 +33,16 @@ def place_reward(tier):
 
 # 판매 (SELL)
 def sell_penalty(tier):
-    """판매: 티어 비례 패널티"""
-    return -0.1 * tier  # T1:-0.1 ~ T6:-0.6
+    """판매: 전략적으로만 사용, 별도 보상 없음"""
+    return 0.0
 
 
 # 조합 (COMBINE) - PPO의 핵심 보상
 def combine_reward(result_tier):
-    """조합: tier² 스케일 (지배적 보상 신호)
-    T2=2.0, T3=4.5, T4=8.0, T5=12.5, T6=18.0
+    """조합: 생존 보상을 압도하지 않도록 축소
+    T2=0.72, T3=1.62, T4=2.88, T5=4.50, T6=6.48
     """
-    return 0.5 * result_tier * result_tier
+    return 0.18 * result_tier * result_tier
 
 
 # =================================================================
@@ -51,7 +51,7 @@ def combine_reward(result_tier):
 
 # 적 처치
 ENEMY_KILL_REWARD = 0.02      # 일반 적 처치
-BOSS_KILL_REWARD = 10.0       # 보스 처치
+BOSS_KILL_REWARD = 18.0       # 생존 핵심 목표 강화
 
 # 위험도 패널티
 def danger_penalty(enemy_ratio, dt):
@@ -62,15 +62,17 @@ def danger_penalty(enemy_ratio, dt):
 # 라운드 생존
 def round_survival_reward(round_num):
     """라운드 생존 보상 (무한 모드: 후반 가중치)"""
-    base = 1.0 + round_num / 30.0
+    base = 1.5 + round_num / 20.0
+    if round_num % 10 == 0:
+        base += 2.0
     if round_num > 90:
         base += (round_num - 90) * 0.1  # 90라운드 이후 추가 보상
     return base
 
 
 # 게임 오버 / 보스 미처치
-GAME_OVER_PENALTY = -3.0
-BOSS_TIMEOUT_PENALTY = -3.0
+GAME_OVER_PENALTY = -10.0
+BOSS_TIMEOUT_PENALTY = -10.0
 
 # 유효하지 않은 행동
 INVALID_ACTION_PENALTY = -0.01

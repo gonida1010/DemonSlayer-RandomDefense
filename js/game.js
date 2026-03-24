@@ -4985,40 +4985,27 @@ class GameScene extends Phaser.Scene {
         actionDesc = `SUMMON (gold: ${this.gold})`;
         break;
 
+      case "summon_all": {
+        const summoned = this._rlSummonUntilFull();
+        actionDesc = `SUMMON_ALL x${summoned}`;
+        break;
+      }
+
       case "place": {
         const unitKey = params?.unitKey;
         if (!unitKey) break;
-        for (let y = 0; y < this.gridSize; y++) {
-          for (let x = 0; x < this.gridSize; x++) {
-            const cell = this.gridState[y][x];
-            if (cell && cell.active && cell.unitKey === unitKey) {
-              // 그리드에서 제거
-              this.gridState[y][x] = null;
+        actionDesc = this._rlPlaceUnitByKey(unitKey)
+          ? `PLACE ${unitKey}`
+          : `PLACE MISS ${unitKey}`;
+        break;
+      }
 
-              // 사거리 기반 최적 배치: 적 궤도(280px)에서 사거리만큼 안쪽
-              const unitRange = cell.dataVal.range || 100;
-              const orbitR = this.mapRadius - 20; // 280: 적 이동 궤도
-              // 사거리가 긴 유닛 → 중앙 쪽, 짧은 유닛 → 궤도 근처
-              const optimalR = Math.max(40, orbitR - unitRange * 0.7);
-              const jitter = (Math.random() - 0.5) * 30; // ±15px 흔들림
-              const placeDist = Math.max(
-                40,
-                Math.min(optimalR + jitter, orbitR - 40),
-              );
-              const angle = Math.random() * Math.PI * 2;
-              const fx = this.mapCenter.x + Math.cos(angle) * placeDist;
-              const fy = this.mapCenter.y + Math.sin(angle) * placeDist;
-
-              // gridX = -1 로 설정해야 필드 유닛으로 인식됨 (공격 가능)
-              cell.gridX = -1;
-              cell.gridY = -1;
-              cell.x = fx;
-              cell.y = fy;
-
-              actionDesc = `PLACE ${unitKey}(R${unitRange}) → r=${Math.round(placeDist)}`;
-              return;
-            }
-          }
+      case "place_best_dps": {
+        const bestUnitKey = this._rlSelectBestPlaceUnit();
+        if (bestUnitKey && this._rlPlaceUnitByKey(bestUnitKey)) {
+          actionDesc = `PLACE_BEST ${bestUnitKey}`;
+        } else {
+          actionDesc = "PLACE_BEST MISS";
         }
         break;
       }
@@ -5026,20 +5013,10 @@ class GameScene extends Phaser.Scene {
       case "sell": {
         const sellKey = params?.unitKey;
         if (!sellKey) break;
-        for (let y = 0; y < this.gridSize; y++) {
-          for (let x = 0; x < this.gridSize; x++) {
-            const cell = this.gridState[y][x];
-            if (cell && cell.active && cell.unitKey === sellKey) {
-              const sellPrice = cell.dataVal.tier * 50;
-              this.gold += sellPrice;
-              this.txtGold.setText(`GOLD: ${this.gold}`);
-              this.gridState[y][x] = null;
-              cell.destroy();
-              actionDesc = `SELL ${sellKey} (+${sellPrice}g)`;
-              return;
-            }
-          }
-        }
+        const sellPrice = this._rlSellUnitByKey(sellKey);
+        actionDesc = sellPrice !== null
+          ? `SELL ${sellKey} (+${sellPrice}g)`
+          : `SELL MISS ${sellKey}`;
         break;
       }
 
@@ -5047,22 +5024,18 @@ class GameScene extends Phaser.Scene {
         const keyA = params?.a;
         const keyB = params?.b;
         if (!keyA || !keyB) break;
-        let unitA = null;
-        let unitB = null;
-        for (let y = 0; y < this.gridSize; y++) {
-          for (let x = 0; x < this.gridSize; x++) {
-            const cell = this.gridState[y][x];
-            if (!cell || !cell.active) continue;
-            if (!unitA && cell.unitKey === keyA) {
-              unitA = cell;
-            } else if (!unitB && cell.unitKey === keyB) {
-              unitB = cell;
-            }
-          }
-        }
-        if (unitA && unitB) {
-          this.tryCombine(unitA, unitB);
-          actionDesc = `COMBINE ${keyA} + ${keyB}`;
+        actionDesc = this._rlCombineKeys(keyA, keyB)
+          ? `COMBINE ${keyA} + ${keyB}`
+          : `COMBINE MISS ${keyA} + ${keyB}`;
+        break;
+      }
+
+      case "combine_best_tier": {
+        const recipe = this._rlSelectBestCombineRecipe();
+        if (recipe && this._rlCombineKeys(recipe.a, recipe.b)) {
+          actionDesc = `COMBINE_BEST ${recipe.a} + ${recipe.b}`;
+        } else {
+          actionDesc = "COMBINE_BEST MISS";
         }
         break;
       }
@@ -5078,6 +5051,148 @@ class GameScene extends Phaser.Scene {
       this.rlOverlay.lastAction = actionDesc;
       this.rlOverlay.actionCount = (this.rlOverlay.actionCount || 0) + 1;
     }
+  }
+
+  _rlPlaceUnitByKey(unitKey) {
+    for (let y = 0; y < this.gridSize; y++) {
+      for (let x = 0; x < this.gridSize; x++) {
+        const cell = this.gridState[y][x];
+        if (!cell || !cell.active || cell.unitKey !== unitKey) continue;
+
+        this.gridState[y][x] = null;
+
+        const unitRange = cell.dataVal.range || 100;
+        const orbitR = this.mapRadius - 20;
+        const optimalR = Math.max(40, orbitR - unitRange * 0.7);
+        const jitter = (Math.random() - 0.5) * 30;
+        const placeDist = Math.max(40, Math.min(optimalR + jitter, orbitR - 40));
+        const angle = Math.random() * Math.PI * 2;
+        const fx = this.mapCenter.x + Math.cos(angle) * placeDist;
+        const fy = this.mapCenter.y + Math.sin(angle) * placeDist;
+
+        cell.gridX = -1;
+        cell.gridY = -1;
+        cell.x = fx;
+        cell.y = fy;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _rlSellUnitByKey(unitKey) {
+    for (let y = 0; y < this.gridSize; y++) {
+      for (let x = 0; x < this.gridSize; x++) {
+        const cell = this.gridState[y][x];
+        if (!cell || !cell.active || cell.unitKey !== unitKey) continue;
+
+        const sellPrice = cell.dataVal.tier * 50;
+        this.gold += sellPrice;
+        this.txtGold.setText(`GOLD: ${this.gold}`);
+        this.gridState[y][x] = null;
+        cell.destroy();
+        return sellPrice;
+      }
+    }
+    return null;
+  }
+
+  _rlCombineKeys(keyA, keyB) {
+    let unitA = null;
+    let unitB = null;
+    for (let y = 0; y < this.gridSize; y++) {
+      for (let x = 0; x < this.gridSize; x++) {
+        const cell = this.gridState[y][x];
+        if (!cell || !cell.active) continue;
+        if (!unitA && cell.unitKey === keyA) {
+          unitA = cell;
+        } else if (!unitB && cell.unitKey === keyB) {
+          unitB = cell;
+        }
+      }
+    }
+
+    if (!unitA || !unitB) {
+      return false;
+    }
+
+    this.tryCombine(unitA, unitB);
+    return true;
+  }
+
+  _rlSelectBestPlaceUnit() {
+    let bestUnit = null;
+    for (let y = 0; y < this.gridSize; y++) {
+      for (let x = 0; x < this.gridSize; x++) {
+        const cell = this.gridState[y][x];
+        if (!cell || !cell.active) continue;
+        if (
+          !bestUnit ||
+          cell.dataVal.dmg * 1000 / cell.dataVal.speed >
+            bestUnit.dataVal.dmg * 1000 / bestUnit.dataVal.speed ||
+          (cell.dataVal.dmg * 1000) / cell.dataVal.speed ===
+            (bestUnit.dataVal.dmg * 1000) / bestUnit.dataVal.speed &&
+            cell.dataVal.tier > bestUnit.dataVal.tier
+        ) {
+          bestUnit = cell;
+        }
+      }
+    }
+    return bestUnit ? bestUnit.unitKey : null;
+  }
+
+  _rlSelectBestCombineRecipe() {
+    if (!RECIPES) return null;
+
+    const gridCounts = {};
+    for (const slot of this.gridState.flat()) {
+      if (slot && slot.active) {
+        gridCounts[slot.unitKey] = (gridCounts[slot.unitKey] || 0) + 1;
+      }
+    }
+
+    let bestRecipe = null;
+    for (const recipe of RECIPES) {
+      const { a, b, result } = recipe;
+      const valid = a === b
+        ? (gridCounts[a] || 0) >= 2
+        : (gridCounts[a] || 0) >= 1 && (gridCounts[b] || 0) >= 1;
+      if (!valid) continue;
+
+      if (!bestRecipe) {
+        bestRecipe = recipe;
+        continue;
+      }
+
+      const resultData = UNIT_DATA[result];
+      const bestData = UNIT_DATA[bestRecipe.result];
+      const resultDps = (resultData.dmg * 1000) / resultData.speed;
+      const bestDps = (bestData.dmg * 1000) / bestData.speed;
+
+      if (
+        resultData.tier > bestData.tier ||
+        (resultData.tier === bestData.tier && !!recipe.hidden && !bestRecipe.hidden) ||
+        (resultData.tier === bestData.tier && !!recipe.hidden === !!bestRecipe.hidden && resultDps > bestDps)
+      ) {
+        bestRecipe = recipe;
+      }
+    }
+
+    return bestRecipe;
+  }
+
+  _rlSummonUntilFull() {
+    let summoned = 0;
+    while (this.gold >= GAME_CONFIG.unitSummonCost) {
+      const hasEmpty = this.gridState.flat().some((cell) => !cell || !cell.active);
+      if (!hasEmpty) break;
+
+      const prevGold = this.gold;
+      this.summonUnit();
+      if (this.gold === prevGold) break;
+      summoned += 1;
+    }
+    return summoned;
   }
 
   /** RL 모드 초기화: 소켓 이벤트 등록 + 시각적 오버레이 + 모델 선택 */

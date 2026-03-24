@@ -30,6 +30,9 @@ from game_data import (
     GAME_CONFIG, NUM_ACTIONS, OBS_DIM, NUM_UNIT_TYPES,
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
+    ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
+    ACTION_MACRO_SUMMON_ALL, OBS_UNIT_COUNT_START,
+    get_required_dps, SYNERGIES,
 )
 
 ALGO_CLASSES = {
@@ -148,6 +151,19 @@ class RLBridge:
 
         obs[9] = min(state.get('validCombines', 0) / 54.0, 1.0)
 
+        required_dps = max(get_required_dps(state.get('round', 1)), 1.0)
+        obs[10] = min(required_dps / 500000.0, 1.0)
+        obs[11] = min(state.get('totalFieldDps', 0) / required_dps, 3.0) / 3.0
+
+        round_num = state.get('round', 1)
+        rounds_until_boss = (GAME_CONFIG['bossInterval'] - (round_num % GAME_CONFIG['bossInterval'])) % GAME_CONFIG['bossInterval']
+        obs[12] = rounds_until_boss / float(GAME_CONFIG['bossInterval'])
+
+        field_keys = [u.get('key') if isinstance(u, dict) else u for u in field_units]
+        field_set = set(field_keys)
+        active_synergies = sum(1 for synergy in SYNERGIES if all(unit in field_set for unit in synergy['units']))
+        obs[13] = active_synergies / float(len(SYNERGIES) or 1)
+
         counts = [0] * NUM_UNIT_TYPES
         for slot in grid_state:
             if slot and 'key' in slot:
@@ -159,8 +175,29 @@ class RLBridge:
             idx = UNIT_KEY_TO_IDX.get(key)
             if idx is not None:
                 counts[idx] += 1
+
+        owned_keys = [slot['key'] for slot in grid_state if slot and 'key' in slot] + [key for key in field_keys if key]
+        high_tier_units = sum(1 for key in owned_keys if UNIT_DATA[key]['tier'] >= 4)
+        obs[14] = (high_tier_units / len(owned_keys)) if owned_keys else 0.0
+
+        grid_counts = {}
+        for slot in grid_state:
+            if slot and 'key' in slot:
+                key = slot['key']
+                grid_counts[key] = grid_counts.get(key, 0) + 1
+        best_combine_tier = 0
+        for recipe in RECIPES:
+            a, b = recipe['a'], recipe['b']
+            if a == b:
+                is_valid = grid_counts.get(a, 0) >= 2
+            else:
+                is_valid = grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1
+            if is_valid:
+                best_combine_tier = max(best_combine_tier, UNIT_DATA[recipe['result']]['tier'])
+        obs[15] = best_combine_tier / 6.0
+
         for i in range(NUM_UNIT_TYPES):
-            obs[10 + i] = min(counts[i] / 10.0, 1.0)
+            obs[OBS_UNIT_COUNT_START + i] = min(counts[i] / 10.0, 1.0)
 
         return obs
 
@@ -197,6 +234,15 @@ class RLBridge:
                 if grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1:
                     mask[ACTION_COMBINE_START + i] = True
 
+        if np.any(mask[ACTION_PLACE_START:ACTION_PLACE_START + NUM_UNIT_TYPES]):
+            mask[ACTION_MACRO_PLACE_BEST] = True
+
+        if np.any(mask[ACTION_COMBINE_START:ACTION_COMBINE_START + len(RECIPES)]):
+            mask[ACTION_MACRO_COMBINE_BEST] = True
+
+        if mask[ACTION_SUMMON]:
+            mask[ACTION_MACRO_SUMMON_ALL] = True
+
         return mask
 
     def action_to_command(self, action):
@@ -214,6 +260,12 @@ class RLBridge:
         if ACTION_COMBINE_START <= action < ACTION_COMBINE_START + len(RECIPES):
             recipe = RECIPES[action - ACTION_COMBINE_START]
             return {'type': 'combine', 'params': {'a': recipe['a'], 'b': recipe['b']}}
+        if action == ACTION_MACRO_PLACE_BEST:
+            return {'type': 'place_best_dps', 'params': {}}
+        if action == ACTION_MACRO_COMBINE_BEST:
+            return {'type': 'combine_best_tier', 'params': {}}
+        if action == ACTION_MACRO_SUMMON_ALL:
+            return {'type': 'summon_all', 'params': {}}
         return {'type': 'wait', 'params': {}}
 
     def predict_action(self, obs, mask):

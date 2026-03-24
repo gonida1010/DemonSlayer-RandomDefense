@@ -50,3 +50,4 @@ desktop.ini
 # Test artifacts
 # ========================
 python/test_logic.py
+tb_logs/

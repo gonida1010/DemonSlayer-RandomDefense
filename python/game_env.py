@@ -18,7 +18,10 @@ from game_data import (
     NUM_ACTIONS, OBS_DIM, NUM_UNIT_TYPES,
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
+    ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
+    ACTION_MACRO_SUMMON_ALL, OBS_UNIT_COUNT_START,
     get_normal_enemy_hp, get_kill_gold, get_boss_hp, get_boss_kill_gold,
+    get_required_dps,
     HIDDEN_RECIPE_INDICES, SYNERGIES, SYNERGY_DPS_MULTIPLIER,
 )
 
@@ -27,7 +30,7 @@ class DemonSlayerEnv(gym.Env):
     """
     귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 (하드 모드, 무한 라운드)
 
-    관측 공간 (67차원):
+        관측 공간 (73차원):
       [0]  round / 200 (무한 모드: 200으로 정규화)
       [1]  gold / 10000
       [2]  time_remaining / 60
@@ -38,14 +41,23 @@ class DemonSlayerEnv(gym.Env):
       [7]  field_unit_count / 30
       [8]  empty_grid_slots / 36
       [9]  valid_combine_count / 54
-      [10..66] 유닛 타입별 보유 수 (그리드+필드) / 10
+            [10] required_dps / 500000
+            [11] current_dps / required_dps
+            [12] rounds_until_boss / bossInterval
+            [13] active_synergy_count / total_synergies
+            [14] high_tier_ratio (T4+) 
+            [15] best_valid_combine_tier / 6
+            [16..72] 유닛 타입별 보유 수 (그리드+필드) / 10
 
-    행동 공간 (170개 이산 행동):
+        행동 공간 (173개 이산 행동):
       0: 대기 (WAIT)
       1: 소환 (SUMMON)
       2~58:  배치 (PLACE unit_type)
       59~115: 판매 (SELL unit_type)
       116~169: 조합 (COMBINE recipe)
+            170: 최고 DPS 유닛 배치
+            171: 최고 티어 조합 실행
+            172: 골드 소진까지 소환
     """
 
     metadata = {'render_modes': []}
@@ -159,6 +171,15 @@ class DemonSlayerEnv(gym.Env):
                 if grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1:
                     mask[ACTION_COMBINE_START + i] = True
 
+        if np.any(mask[ACTION_PLACE_START:ACTION_PLACE_START + NUM_UNIT_TYPES]):
+            mask[ACTION_MACRO_PLACE_BEST] = True
+
+        if np.any(mask[ACTION_COMBINE_START:ACTION_COMBINE_START + NUM_RECIPES]):
+            mask[ACTION_MACRO_COMBINE_BEST] = True
+
+        if mask[ACTION_SUMMON]:
+            mask[ACTION_MACRO_SUMMON_ALL] = True
+
         return mask
 
     # =================================================================
@@ -191,6 +212,20 @@ class DemonSlayerEnv(gym.Env):
                             if m)
         obs[9] = min(valid_combines / 54.0, 1.0)
 
+        required_dps = max(get_required_dps(self.round), 1.0)
+        obs[10] = min(required_dps / 500000.0, 1.0)
+        obs[11] = min(self._field_dps_cache / required_dps, 3.0) / 3.0
+        rounds_until_boss = (GAME_CONFIG['bossInterval'] - (self.round % GAME_CONFIG['bossInterval'])) % GAME_CONFIG['bossInterval']
+        obs[12] = rounds_until_boss / float(GAME_CONFIG['bossInterval'])
+        obs[13] = self._get_active_synergy_count() / float(len(SYNERGIES) or 1)
+
+        all_owned_units = [slot for slot in self.grid if slot is not None] + list(self.field_units)
+        high_tier_units = sum(1 for key in all_owned_units if UNIT_DATA[key]['tier'] >= 4)
+        obs[14] = (high_tier_units / len(all_owned_units)) if all_owned_units else 0.0
+
+        best_combine_tier = self._get_best_valid_combine_tier()
+        obs[15] = best_combine_tier / 6.0
+
         # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
         for slot in self.grid:
@@ -199,7 +234,7 @@ class DemonSlayerEnv(gym.Env):
         for key in self.field_units:
             counts[UNIT_KEY_TO_IDX[key]] += 1
         for i in range(NUM_UNIT_TYPES):
-            obs[10 + i] = min(counts[i] / 10.0, 1.0)
+            obs[OBS_UNIT_COUNT_START + i] = min(counts[i] / 10.0, 1.0)
 
         return obs
 
@@ -241,6 +276,15 @@ class DemonSlayerEnv(gym.Env):
         if ACTION_COMBINE_START <= action <= ACTION_COMBINE_START + NUM_RECIPES - 1:
             recipe_idx = action - ACTION_COMBINE_START
             return self._combine(recipe_idx)
+
+        if action == ACTION_MACRO_PLACE_BEST:
+            return self._place_best_dps_unit()
+
+        if action == ACTION_MACRO_COMBINE_BEST:
+            return self._combine_best_tier_recipe()
+
+        if action == ACTION_MACRO_SUMMON_ALL:
+            return self._summon_until_depleted()
 
         return self.rewards.INVALID_ACTION_PENALTY
 
@@ -322,7 +366,7 @@ class DemonSlayerEnv(gym.Env):
         has_empty = sum(1 for s in self.grid if s is None)
         return self.rewards.wait_penalty(summons_possible, has_empty)
 
-    def _summon(self):
+    def _summon(self, grant_reward=True):
         cost = GAME_CONFIG['unitSummonCost']
         if self.gold < cost:
             return self.rewards.INVALID_ACTION_PENALTY
@@ -346,7 +390,7 @@ class DemonSlayerEnv(gym.Env):
         slot = empty_indices[self.np_random.integers(0, len(empty_indices))]
         self.grid[slot] = unit_key
 
-        return self.rewards.SUMMON_REWARD
+        return self.rewards.SUMMON_REWARD if grant_reward else 0.0
 
     def _place(self, unit_key):
         if unit_key not in self.grid:
@@ -413,6 +457,76 @@ class DemonSlayerEnv(gym.Env):
         if len(sig.parameters) > 1:
             return self.rewards.combine_reward(result_tier, self._recent_combines) * hidden_mult
         return self.rewards.combine_reward(result_tier) * hidden_mult
+
+    def _place_best_dps_unit(self):
+        best_unit = max(
+            (key for key in self.grid if key is not None),
+            default=None,
+            key=lambda key: (
+                UNIT_DATA[key]['dps'],
+                UNIT_DATA[key]['tier'],
+            ),
+        )
+        if best_unit is None:
+            return self.rewards.INVALID_ACTION_PENALTY
+        return self._place(best_unit)
+
+    def _combine_best_tier_recipe(self):
+        best_recipe_idx = self._get_best_valid_combine_recipe_idx()
+        if best_recipe_idx is None:
+            return self.rewards.INVALID_ACTION_PENALTY
+        return self._combine(best_recipe_idx)
+
+    def _summon_until_depleted(self):
+        summoned = 0
+        while self.gold >= GAME_CONFIG['unitSummonCost'] and any(slot is None for slot in self.grid):
+            result = self._summon(grant_reward=False)
+            if result == self.rewards.INVALID_ACTION_PENALTY:
+                break
+            summoned += 1
+
+        if summoned == 0:
+            return self.rewards.INVALID_ACTION_PENALTY
+
+        return self.rewards.SUMMON_REWARD * min(summoned, 4) * 0.5
+
+    def _get_best_valid_combine_recipe_idx(self):
+        grid_counts = {}
+        for slot in self.grid:
+            if slot is not None:
+                grid_counts[slot] = grid_counts.get(slot, 0) + 1
+
+        valid_recipe_indices = []
+        for i, recipe in enumerate(RECIPES):
+            a, b = recipe['a'], recipe['b']
+            if a == b:
+                is_valid = grid_counts.get(a, 0) >= 2
+            else:
+                is_valid = grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1
+            if is_valid:
+                valid_recipe_indices.append(i)
+
+        if not valid_recipe_indices:
+            return None
+
+        return max(
+            valid_recipe_indices,
+            key=lambda idx: (
+                UNIT_DATA[RECIPES[idx]['result']]['tier'],
+                1 if RECIPES[idx].get('hidden', False) else 0,
+                UNIT_DATA[RECIPES[idx]['result']]['dps'],
+            ),
+        )
+
+    def _get_best_valid_combine_tier(self):
+        best_recipe_idx = self._get_best_valid_combine_recipe_idx()
+        if best_recipe_idx is None:
+            return 0
+        return UNIT_DATA[RECIPES[best_recipe_idx]['result']]['tier']
+
+    def _get_active_synergy_count(self):
+        field_set = set(self.field_units)
+        return sum(1 for synergy in SYNERGIES if all(unit in field_set for unit in synergy['units']))
 
     # =================================================================
     # 게임 시뮬레이션

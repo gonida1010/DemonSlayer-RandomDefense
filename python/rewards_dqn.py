@@ -23,7 +23,7 @@ def wait_penalty(summons_possible, empty_slots):
 
 
 # 소환 (SUMMON)
-SUMMON_REWARD = 0.10  # PPO보다 작게 (DQN은 누적에 민감)
+SUMMON_REWARD = 0.02  # 행동 보상 비중 축소
 
 
 # 배치 (PLACE)
@@ -34,19 +34,17 @@ def place_reward(tier):
 
 # 판매 (SELL)
 def sell_penalty(tier):
-    """판매: 낮은 티어 판매는 허용적, 고티어는 강한 패널티"""
-    if tier <= 2:
-        return -0.05 * tier  # T1:-0.05, T2:-0.10
-    return -0.15 * tier  # T3:-0.45 ~ T6:-0.90
+    """판매: 보상 없이 중립 처리"""
+    return 0.0
 
 
 # 조합 (COMBINE)
 def combine_reward(result_tier):
     """조합: 선형 + 보너스 (DQN에 맞는 더 균일한 보상 분포)
-    T2=1.0, T3=2.0, T4=4.0, T5=7.0, T6=11.0
+    T2=0.6, T3=1.2, T4=2.3, T5=3.9, T6=5.5
     """
-    base = result_tier * 0.5
-    bonus = max(0, (result_tier - 3)) * 1.5
+    base = result_tier * 0.3
+    bonus = max(0, (result_tier - 3)) * 0.8
     return base + bonus
 
 
@@ -56,7 +54,7 @@ def combine_reward(result_tier):
 
 # 적 처치
 ENEMY_KILL_REWARD = 0.03      # 일반 적 (DQN: 즉시 보상 중요)
-BOSS_KILL_REWARD = 8.0        # 보스 (스케일 축소)
+BOSS_KILL_REWARD = 12.0       # 생존 목표 강화
 
 # 위험도 패널티
 def danger_penalty(enemy_ratio, dt):
@@ -67,18 +65,18 @@ def danger_penalty(enemy_ratio, dt):
 # 라운드 생존
 def round_survival_reward(round_num):
     """라운드 생존 보상 (DQN: 단계적 보너스)"""
-    base = 0.5 + round_num / 50.0
+    base = 1.0 + round_num / 30.0
     # 10라운드 단위 마일스톤 보너스
     if round_num % 10 == 0:
-        base += 2.0
+        base += 2.5
     if round_num > 90:
         base += (round_num - 90) * 0.05
     return base
 
 
 # 게임 오버 / 보스 미처치
-GAME_OVER_PENALTY = -5.0       # DQN에서 더 강한 종료 패널티
-BOSS_TIMEOUT_PENALTY = -4.0
+GAME_OVER_PENALTY = -10.0
+BOSS_TIMEOUT_PENALTY = -10.0
 
 # 유효하지 않은 행동
 INVALID_ACTION_PENALTY = -0.02  # DQN에서 무효 행동 더 강하게 패널티

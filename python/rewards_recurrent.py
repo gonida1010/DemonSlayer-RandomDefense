@@ -23,7 +23,7 @@ def wait_penalty(summons_possible, empty_slots):
 
 
 # 소환 (SUMMON)
-SUMMON_REWARD = 0.12
+SUMMON_REWARD = 0.03
 
 
 # 배치 (PLACE)
@@ -34,8 +34,8 @@ def place_reward(tier):
 
 # 판매 (SELL)
 def sell_penalty(tier):
-    """판매: LSTM은 맥락을 볼 수 있으므로 상황별 판단 가능"""
-    return -0.08 * tier
+    """판매: 보상으로 유도하지 않음"""
+    return 0.0
 
 
 # 조합 (COMBINE) - RecurrentPPO의 핵심: 연쇄 조합 보너스
@@ -44,9 +44,9 @@ def combine_reward(result_tier, consecutive_combines=0):
     LSTM이 연속 조합 패턴(소환→소환→조합→조합)을 학습하도록 유도
     consecutive_combines: 최근 5스텝 내 연속 조합 횟수
     """
-    base = 0.4 * result_tier * result_tier
+    base = 0.16 * result_tier * result_tier
     # 연쇄 조합 보너스: 연속으로 조합할수록 추가 보상
-    chain_bonus = 0.3 * consecutive_combines * result_tier
+    chain_bonus = 0.12 * consecutive_combines * result_tier
     return base + chain_bonus
 
 
@@ -56,7 +56,7 @@ def combine_reward(result_tier, consecutive_combines=0):
 
 # 적 처치
 ENEMY_KILL_REWARD = 0.02
-BOSS_KILL_REWARD = 12.0  # LSTM은 보스 대비 전략을 기억 가능 → 더 높은 보상
+BOSS_KILL_REWARD = 20.0  # 장기 생존 목표 강조
 
 # 위험도 패널티
 def danger_penalty(enemy_ratio, dt):
@@ -67,7 +67,9 @@ def danger_penalty(enemy_ratio, dt):
 # 라운드 생존
 def round_survival_reward(round_num):
     """라운드 생존 보상 (LSTM: 장기 생존에 높은 가치)"""
-    base = 1.2 + round_num / 25.0
+    base = 1.8 + round_num / 18.0
+    if round_num % 10 == 0:
+        base += 2.5
     if round_num > 90:
         base += (round_num - 90) * 0.15  # 90 이후 강한 보상 증가
     return base
@@ -92,8 +94,8 @@ def field_composition_bonus(tier_counts):
 
 
 # 게임 오버 / 보스 미처치
-GAME_OVER_PENALTY = -3.0
-BOSS_TIMEOUT_PENALTY = -3.0
+GAME_OVER_PENALTY = -10.0
+BOSS_TIMEOUT_PENALTY = -10.0
 
 # 유효하지 않은 행동
 INVALID_ACTION_PENALTY = -0.01

@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import os
+
+
 """
 config.py - 강화학습 설정 파일 (하드 모드 + 다중 알고리즘)
 
@@ -31,9 +34,9 @@ LOG_INTERVAL = 10                # SB3 표 로그 출력 간격 (iteration 기�
 # =============================================================
 # 2. 저장 / 로깅 경로 (알고리즘별 분리)
 # =============================================================
-SAVE_DIR_BASE = "./models"        # models/ppo/, models/recurrent/, models/dqn/
-LOG_DIR_BASE = "./tb_logs"        # tb_logs/ppo/, tb_logs/recurrent/, tb_logs/dqn/
-CHECKPOINT_FREQ = 1000000          # 체크포인트 저장 간격
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAVE_DIR_BASE = os.path.join(BASE_DIR, "models")
+LOG_DIR_BASE = os.path.join(BASE_DIR, "tb_logs")
 
 # =============================================================
 # 3. MaskablePPO 하이퍼파라미터

@@ -228,7 +228,9 @@ OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 73
 
 # =====================================================================
 # 시너지 (Synergy) - T6 유닛 조합 보너스
-# 3명이 필드에 모두 배치되면 해당 유닛 공격력 1.2배
+# 3명이 필드에 모두 배치되면 해당 유닛 공격력 +20%
+# 여러 시너지에 동시에 포함되면 보너스가 합연산으로 누적됨
+# 예: 2시너지 = 1.4배, 3시너지 = 1.6배
 # 모든 T6 유닛이 최소 2개 시너지에 포함
 # =====================================================================
 SYNERGIES = [
@@ -259,10 +261,10 @@ SYNERGY_DPS_MULTIPLIER = 1.2
 ACTION_WAIT = 0
 ACTION_SUMMON = 1
 ACTION_PLACE_START = 2
-ACTION_PLACE_END = 2 + NUM_UNIT_TYPES - 1            # 58
-ACTION_SELL_START = 2 + NUM_UNIT_TYPES                # 59
-ACTION_SELL_END = 2 + 2 * NUM_UNIT_TYPES - 1         # 115
-ACTION_COMBINE_START = 2 + 2 * NUM_UNIT_TYPES         # 116
+ACTION_PLACE_END = 2 + NUM_UNIT_TYPES - 1                   # 58
+ACTION_SELL_START = 2 + NUM_UNIT_TYPES                      # 59
+ACTION_SELL_END = 2 + 2 * NUM_UNIT_TYPES - 1                # 115
+ACTION_COMBINE_START = 2 + 2 * NUM_UNIT_TYPES               # 116
 ACTION_COMBINE_END = ACTION_COMBINE_START + NUM_RECIPES - 1  # 169
 ACTION_MACRO_PLACE_BEST = ACTION_COMBINE_END + 1             # 170
 ACTION_MACRO_COMBINE_BEST = ACTION_MACRO_PLACE_BEST + 1      # 171

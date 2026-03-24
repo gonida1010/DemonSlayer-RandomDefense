@@ -7,20 +7,17 @@ train.py - 귀멸의 칼날 랜덤 디펜스 RL 학습 (하드 모드, 다중 �
   3. DQN          (stable-baselines3) - Off-policy, 경험 리플레이
 
 학습 명령어:
-  python train.py --algorithm ppo                          # PPO 새 학습
-  python train.py --algorithm ppo --resume                 # PPO 이어서 학습 (최신 체크포인트 자동 탐색)
-  python train.py --algorithm ppo --resume model.zip       # PPO 특정 모델부터 이어 학습
-  python train.py --algorithm recurrent                    # RecurrentPPO 새 학습
-  python train.py --algorithm recurrent --resume           # RecurrentPPO 이어서 학습
-  python train.py --algorithm dqn                          # DQN 새 학습
-  python train.py --algorithm dqn --resume                 # DQN 이어서 학습
-  python train.py --eval models/ppo/best_model.zip         # 모델 평가
-  python train.py --algorithm ppo --timesteps 5000000      # 커스텀 타임스텝
+    python train.py --algorithm ppo                          # PPO 새 학습
+    python train.py --algorithm ppo --resume                 # PPO 이어서 학습 (best_model 우선)
+    python train.py --algorithm ppo --resume model.zip       # PPO 특정 모델부터 이어 학습
+    python train.py --algorithm recurrent                    # RecurrentPPO 새 학습
+    python train.py --algorithm recurrent --resume           # RecurrentPPO 이어서 학습 (best_model 우선)
+    python train.py --algorithm dqn                          # DQN 새 학습
+    python train.py --algorithm dqn --resume                 # DQN 이어서 학습 (best_model 우선)
+    python train.py --eval models/ppo/best_model.zip         # 모델 평가
+    python train.py --algorithm ppo --timesteps 5000000      # 커스텀 타임스텝
 """
 import os
-import sys
-import glob
-import re
 import time
 import argparse
 import numpy as np
@@ -29,7 +26,7 @@ from sb3_contrib import MaskablePPO, RecurrentPPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import (
-    BaseCallback, CheckpointCallback, CallbackList
+    BaseCallback, CallbackList
 )
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -268,21 +265,16 @@ def _get_algo_dirs(algorithm):
     return save_dir, log_dir
 
 
-def _find_latest_checkpoint(save_dir, prefix='demon_slayer'):
-    """최신 체크포인트 자동 탐색"""
-    pattern = os.path.join(save_dir, f'{prefix}_*_steps.zip')
-    files = glob.glob(pattern)
-    if not files:
-        final = os.path.join(save_dir, f'{prefix}_final.zip')
-        if os.path.exists(final):
-            return final
-        return None
-
-    def extract_steps(f):
-        m = re.search(r'_(\d+)_steps\.zip$', f)
-        return int(m.group(1)) if m else 0
-
-    return max(files, key=extract_steps)
+def _find_resume_model(save_dir):
+    """이어서 학습할 모델 탐색: best_model 우선, 없으면 final 사용"""
+    candidates = [
+        os.path.join(save_dir, 'best_model.zip'),
+        os.path.join(save_dir, 'demon_slayer_final.zip'),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 
 # =====================================================================
@@ -488,10 +480,10 @@ def _resolve_resume(resume_arg, save_dir):
     """Resume 인자 처리"""
     if resume_arg is None:
         return None
-    if resume_arg == '__latest__':
-        path = _find_latest_checkpoint(save_dir)
+    if resume_arg == '__best__':
+        path = _find_resume_model(save_dir)
         if path is None:
-            print("  [!] 체크포인트 없음 → 새로 학습 시작")
+            print("  [!] 이어서 학습할 best/final 모델 없음 → 새로 학습 시작")
         return path
     return resume_arg
 
@@ -500,11 +492,6 @@ def _build_callbacks(save_dir, n_envs, algorithm='ppo'):
     """콜백 빌드"""
     return CallbackList([
         GameMetricsCallback(save_dir=save_dir, algorithm=algorithm, verbose=1),
-        CheckpointCallback(
-            save_freq=max(cfg.CHECKPOINT_FREQ // max(n_envs, 1), 1000),
-            save_path=save_dir,
-            name_prefix='demon_slayer',
-        ),
     ])
 
 
@@ -618,8 +605,8 @@ def main():
         help='학습률 (기본: 알고리즘별 설정)'
     )
     parser.add_argument(
-        '--resume', nargs='?', const='__latest__', default=None,
-        help='이어서 학습 (경로 생략 시 최신 체크포인트 자동 탐색)'
+        '--resume', nargs='?', const='__best__', default=None,
+        help='이어서 학습 (경로 생략 시 best_model.zip 우선, 없으면 final 모델 사용)'
     )
     parser.add_argument(
         '--eval', type=str, default=None,

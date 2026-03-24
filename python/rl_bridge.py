@@ -5,12 +5,16 @@ rl_bridge.py - 학습된 RL 모델로 실제 게임 제어 + AI 대전
 AI 대전 모드에서는 내부 game_env를 사용해 병렬 게임을 시뮬레이션합니다.
 
 사용법 (일반 RL 모드):
-  python rl_bridge.py --model models/ppo/demon_slayer_final.zip
-  python rl_bridge.py --model models/recurrent/demon_slayer_final.zip --algorithm recurrent
-  python rl_bridge.py --model models/dqn/demon_slayer_final.zip --algorithm dqn
+    1. cd /d c:\Pyg\DemonSlayer_RandomDefense\MyDefenseGame
+    2. npm start
+    3. http://localhost:3000/?rl=true 접속
+    4. python rl_bridge.py --model models/ppo/best_model.zip
+
+    python rl_bridge.py --model models/recurrent/demon_slayer_final.zip --algorithm recurrent
+    python rl_bridge.py --model models/dqn/demon_slayer_final.zip --algorithm dqn
 
 사용법 (AI 대전 지원 - 서버가 자동 호출):
-  python rl_bridge.py --model models/ppo/demon_slayer_final.zip --ai-battle
+    python rl_bridge.py --model models/ppo/demon_slayer_final.zip --ai-battle
 """
 import argparse
 import time
@@ -22,6 +26,8 @@ try:
 except ImportError:
     print("socketio 패키지가 필요합니다: pip install python-socketio[client] websocket-client")
     exit(1)
+
+from socketio.exceptions import ConnectionError as SocketConnectionError
 
 from sb3_contrib import MaskablePPO, RecurrentPPO
 from stable_baselines3 import DQN
@@ -40,6 +46,26 @@ ALGO_CLASSES = {
     'recurrent': RecurrentPPO,
     'dqn': DQN,
 }
+
+
+def _get_owned_unit_counts(grid_state, field_units):
+    counts = {}
+    for slot in grid_state:
+        if slot and 'key' in slot:
+            key = slot['key']
+            counts[key] = counts.get(key, 0) + 1
+    for unit in field_units:
+        key = unit.get('key') if isinstance(unit, dict) else unit
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _is_recipe_valid(recipe, owned_counts):
+    a, b = recipe['a'], recipe['b']
+    if a == b:
+        return owned_counts.get(a, 0) >= 2
+    return owned_counts.get(a, 0) >= 1 and owned_counts.get(b, 0) >= 1
 
 
 def _apply_dqn_mask(model, obs, mask, device='cpu'):
@@ -125,7 +151,15 @@ class RLBridge:
 
     def connect(self, url='http://localhost:3000'):
         print(f"서버 연결 시도: {url}")
-        self.sio.connect(url)
+        try:
+            self.sio.connect(url)
+        except SocketConnectionError as exc:
+            print("서버 연결 실패")
+            print(f"  주소: {url}")
+            print(f"  원인: {exc}")
+            print("  해결: 프로젝트 루트에서 서버를 먼저 실행하세요.")
+            print("  명령어: npm start")
+            raise SystemExit(1) from exc
 
     def state_to_obs(self, state):
         """게임 상태 → 관측 벡터 변환 (하드 모드: round/200.0)"""
@@ -163,6 +197,7 @@ class RLBridge:
         field_set = set(field_keys)
         active_synergies = sum(1 for synergy in SYNERGIES if all(unit in field_set for unit in synergy['units']))
         obs[13] = active_synergies / float(len(SYNERGIES) or 1)
+        owned_counts = _get_owned_unit_counts(grid_state, field_units)
 
         counts = [0] * NUM_UNIT_TYPES
         for slot in grid_state:
@@ -180,19 +215,9 @@ class RLBridge:
         high_tier_units = sum(1 for key in owned_keys if UNIT_DATA[key]['tier'] >= 4)
         obs[14] = (high_tier_units / len(owned_keys)) if owned_keys else 0.0
 
-        grid_counts = {}
-        for slot in grid_state:
-            if slot and 'key' in slot:
-                key = slot['key']
-                grid_counts[key] = grid_counts.get(key, 0) + 1
         best_combine_tier = 0
         for recipe in RECIPES:
-            a, b = recipe['a'], recipe['b']
-            if a == b:
-                is_valid = grid_counts.get(a, 0) >= 2
-            else:
-                is_valid = grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1
-            if is_valid:
+            if _is_recipe_valid(recipe, owned_counts):
                 best_combine_tier = max(best_combine_tier, UNIT_DATA[recipe['result']]['tier'])
         obs[15] = best_combine_tier / 6.0
 
@@ -207,32 +232,24 @@ class RLBridge:
         mask[ACTION_WAIT] = True
 
         grid_state = state.get('gridState', [])
+        field_units = state.get('fieldUnits', [])
         gold = state.get('gold', 0)
         has_empty = any(s is None for s in grid_state)
 
         if gold >= GAME_CONFIG['unitSummonCost'] and has_empty:
             mask[ACTION_SUMMON] = True
 
-        grid_counts = {}
-        for slot in grid_state:
-            if slot and 'key' in slot:
-                key = slot['key']
-                grid_counts[key] = grid_counts.get(key, 0) + 1
+        owned_counts = _get_owned_unit_counts(grid_state, field_units)
 
-        for key, count in grid_counts.items():
+        for key in {slot['key'] for slot in grid_state if slot and 'key' in slot}:
             idx = UNIT_KEY_TO_IDX.get(key)
             if idx is not None:
                 mask[ACTION_PLACE_START + idx] = True
                 mask[ACTION_SELL_START + idx] = True
 
         for i, recipe in enumerate(RECIPES):
-            a, b = recipe['a'], recipe['b']
-            if a == b:
-                if grid_counts.get(a, 0) >= 2:
-                    mask[ACTION_COMBINE_START + i] = True
-            else:
-                if grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1:
-                    mask[ACTION_COMBINE_START + i] = True
+            if _is_recipe_valid(recipe, owned_counts):
+                mask[ACTION_COMBINE_START + i] = True
 
         if np.any(mask[ACTION_PLACE_START:ACTION_PLACE_START + NUM_UNIT_TYPES]):
             mask[ACTION_MACRO_PLACE_BEST] = True

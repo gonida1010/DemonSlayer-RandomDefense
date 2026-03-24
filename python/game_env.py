@@ -156,20 +156,17 @@ class DemonSlayerEnv(gym.Env):
             if slot is not None:
                 grid_counts[slot] = grid_counts.get(slot, 0) + 1
 
+        owned_counts = self._get_owned_unit_counts()
+
         for key, count in grid_counts.items():
             idx = UNIT_KEY_TO_IDX[key]
             mask[ACTION_PLACE_START + idx] = True   # PLACE
             mask[ACTION_SELL_START + idx] = True     # SELL
 
-        # COMBINE: 두 재료가 모두 그리드에 있어야 함
+        # COMBINE: 대기실 + 배치 필드 전체 보유 기준으로 판정
         for i, recipe in enumerate(RECIPES):
-            a, b = recipe['a'], recipe['b']
-            if a == b:
-                if grid_counts.get(a, 0) >= 2:
-                    mask[ACTION_COMBINE_START + i] = True
-            else:
-                if grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1:
-                    mask[ACTION_COMBINE_START + i] = True
+            if self._is_recipe_valid(recipe, owned_counts):
+                mask[ACTION_COMBINE_START + i] = True
 
         if np.any(mask[ACTION_PLACE_START:ACTION_PLACE_START + NUM_UNIT_TYPES]):
             mask[ACTION_MACRO_PLACE_BEST] = True
@@ -208,7 +205,7 @@ class DemonSlayerEnv(gym.Env):
         obs[8] = sum(1 for s in self.grid if s is None) / 36.0
 
         # 유효 조합 수
-        valid_combines = sum(1 for m in self.action_masks()[ACTION_COMBINE_START:]
+        valid_combines = sum(1 for m in self.action_masks()[ACTION_COMBINE_START:ACTION_COMBINE_START + NUM_RECIPES]
                             if m)
         obs[9] = min(valid_combines / 54.0, 1.0)
 
@@ -422,27 +419,28 @@ class DemonSlayerEnv(gym.Env):
         recipe = RECIPES[recipe_idx]
         a, b, result = recipe['a'], recipe['b'], recipe['result']
 
+        owned_counts = self._get_owned_unit_counts()
+        if not self._is_recipe_valid(recipe, owned_counts):
+            return self.rewards.INVALID_ACTION_PENALTY
+
         if a == b:
-            if self.grid.count(a) < 2:
+            if not self._remove_owned_unit(a):
                 return self.rewards.INVALID_ACTION_PENALTY
-            idx_a = self.grid.index(a)
-            self.grid[idx_a] = None
-            idx_b = self.grid.index(a)
-            self.grid[idx_b] = None
+            if not self._remove_owned_unit(a):
+                return self.rewards.INVALID_ACTION_PENALTY
         else:
-            if a not in self.grid or b not in self.grid:
+            if not self._remove_owned_unit(a):
                 return self.rewards.INVALID_ACTION_PENALTY
-            idx_a = self.grid.index(a)
-            self.grid[idx_a] = None
-            idx_b = self.grid.index(b)
-            self.grid[idx_b] = None
+            if not self._remove_owned_unit(b):
+                return self.rewards.INVALID_ACTION_PENALTY
 
         empty_indices = [i for i, s in enumerate(self.grid) if s is None]
         if empty_indices:
             self.grid[empty_indices[0]] = result
         else:
             self.field_units.append(result)
-            self._update_field_dps()
+
+        self._update_field_dps()
 
         result_tier = UNIT_DATA[result]['tier']
         self._recent_combines += 1
@@ -491,19 +489,11 @@ class DemonSlayerEnv(gym.Env):
         return self.rewards.SUMMON_REWARD * min(summoned, 4) * 0.5
 
     def _get_best_valid_combine_recipe_idx(self):
-        grid_counts = {}
-        for slot in self.grid:
-            if slot is not None:
-                grid_counts[slot] = grid_counts.get(slot, 0) + 1
+        owned_counts = self._get_owned_unit_counts()
 
         valid_recipe_indices = []
         for i, recipe in enumerate(RECIPES):
-            a, b = recipe['a'], recipe['b']
-            if a == b:
-                is_valid = grid_counts.get(a, 0) >= 2
-            else:
-                is_valid = grid_counts.get(a, 0) >= 1 and grid_counts.get(b, 0) >= 1
-            if is_valid:
+            if self._is_recipe_valid(recipe, owned_counts):
                 valid_recipe_indices.append(i)
 
         if not valid_recipe_indices:
@@ -527,6 +517,32 @@ class DemonSlayerEnv(gym.Env):
     def _get_active_synergy_count(self):
         field_set = set(self.field_units)
         return sum(1 for synergy in SYNERGIES if all(unit in field_set for unit in synergy['units']))
+
+    def _get_owned_unit_counts(self):
+        counts = {}
+        for slot in self.grid:
+            if slot is not None:
+                counts[slot] = counts.get(slot, 0) + 1
+        for key in self.field_units:
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    @staticmethod
+    def _is_recipe_valid(recipe, owned_counts):
+        a, b = recipe['a'], recipe['b']
+        if a == b:
+            return owned_counts.get(a, 0) >= 2
+        return owned_counts.get(a, 0) >= 1 and owned_counts.get(b, 0) >= 1
+
+    def _remove_owned_unit(self, unit_key):
+        if unit_key in self.grid:
+            idx = self.grid.index(unit_key)
+            self.grid[idx] = None
+            return True
+        if unit_key in self.field_units:
+            self.field_units.remove(unit_key)
+            return True
+        return False
 
     # =================================================================
     # 게임 시뮬레이션
@@ -680,30 +696,32 @@ class DemonSlayerEnv(gym.Env):
 
     def _update_field_dps(self):
         """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 분리, 시너지 적용)"""
-        # 시너지 보너스 적용 대상 유닛 키 집합
-        boosted = self._get_synergy_boosted_units()
+        bonus_per_stack = max(0.0, SYNERGY_DPS_MULTIPLIER - 1.0)
+        stack_counts = self._get_synergy_stack_counts()
 
         raw_dps = 0.0
         boss_dps = 0.0
         for key in self.field_units:
             d = UNIT_DATA[key]
             dps = d['dps']
-            if key in boosted:
-                dps *= SYNERGY_DPS_MULTIPLIER
+            stacks = stack_counts.get(key, 0)
+            if stacks > 0:
+                dps *= 1.0 + bonus_per_stack * stacks
             raw_dps += dps
             boss_dps += dps * self._range_efficiency(d['range'])
         self._field_dps_cache = raw_dps           # 일반 적 대상
         self._field_boss_dps_cache = boss_dps     # 보스 대상
 
-    def _get_synergy_boosted_units(self):
-        """활성된 시너지의 구성원 유닛 키 집합 반환"""
+    def _get_synergy_stack_counts(self):
+        """활성 시너지에 포함된 각 필드 유닛의 중첩 수 반환"""
         field_set = set(self.field_units)
-        boosted = set()
+        stack_counts = {}
         for synergy in SYNERGIES:
             units = synergy['units']
             if all(u in field_set for u in units):
-                boosted.update(units)
-        return boosted
+                for unit_key in units:
+                    stack_counts[unit_key] = stack_counts.get(unit_key, 0) + 1
+        return stack_counts
 
     # =================================================================
     # 유틸리티

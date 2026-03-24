@@ -657,22 +657,38 @@ class MenuScene extends Phaser.Scene {
     // [화면 4분할 텍스트 배치]
     // (1) 스토리 (x=160)
     this.labelNormal = this.add
-      .text(160, 260, "스토리\n(Normal)", { ...style, fontSize: "28px", color: "#3498db" })
+      .text(160, 260, "스토리\n(Normal)", {
+        ...style,
+        fontSize: "28px",
+        color: "#3498db",
+      })
       .setOrigin(0.5);
 
     // (2) 지옥 (x=480)
     this.labelHard = this.add
-      .text(480, 260, "지옥\n(Hard)", { ...style, fontSize: "28px", color: "#e74c3c" })
+      .text(480, 260, "지옥\n(Hard)", {
+        ...style,
+        fontSize: "28px",
+        color: "#e74c3c",
+      })
       .setOrigin(0.5);
 
     // (3) 협동 (x=800)
     this.labelMulti = this.add
-      .text(800, 260, "협동\n(Multi)", { ...style, fontSize: "28px", color: "#2ecc71" })
+      .text(800, 260, "협동\n(Multi)", {
+        ...style,
+        fontSize: "28px",
+        color: "#2ecc71",
+      })
       .setOrigin(0.5);
 
     // (4) AI 대전 (x=1120)
     this.labelAIBattle = this.add
-      .text(1120, 260, "AI 대전\n(VS Agent)", { ...style, fontSize: "28px", color: "#9b59b6" })
+      .text(1120, 260, "AI 대전\n(VS Agent)", {
+        ...style,
+        fontSize: "28px",
+        color: "#9b59b6",
+      })
       .setOrigin(0.5);
 
     // 5. 랭킹 타이틀 및 리스트 (하단 중앙으로 배치)
@@ -1684,6 +1700,7 @@ class GameScene extends Phaser.Scene {
 
     this.drawGrid();
     this.createUI();
+    this.updateSynergies();
 
     this.enemies = this.physics.add.group();
     this.units = this.add.group();
@@ -2107,6 +2124,42 @@ class GameScene extends Phaser.Scene {
       .setVisible(false)
       .setDepth(200);
 
+    this.synergyTexts = [];
+    this.synergyStatuses = [];
+    this.synergyTooltip = this.add
+      .text(0, 0, "", {
+        fontFamily: "Cafe24ClassicType",
+        fontSize: "16px",
+        color: "#f8f9fa",
+        backgroundColor: "#000000bb",
+        stroke: "#000000",
+        strokeThickness: 3,
+        padding: { x: 10, y: 8 },
+        align: "right",
+      })
+      .setVisible(false)
+      .setDepth(10002);
+
+    (SYNERGIES || []).forEach((synergy, idx) => {
+      const textObj = this.add
+        .text(1240, 28 + idx * 26, synergy.name, {
+          fontFamily: "Cafe24ClassicType",
+          fontSize: "22px",
+          color: "#d7dde8",
+          stroke: "#101820",
+          strokeThickness: 2,
+          align: "right",
+        })
+        .setOrigin(1, 0)
+        .setAlpha(0.18)
+        .setDepth(115)
+        .setInteractive({ useHandCursor: true });
+
+      textObj.on("pointerover", () => this.showSynergyTooltip(textObj));
+      textObj.on("pointerout", () => this.synergyTooltip.setVisible(false));
+      this.synergyTexts.push(textObj);
+    });
+
     this.pauseOverlay = this.add
       .rectangle(640, 360, 1280, 720, 0x000000, 0.7)
       .setVisible(false)
@@ -2127,6 +2180,7 @@ class GameScene extends Phaser.Scene {
       this.statText.setText("유닛을 클릭하면 정보가 표시됩니다.");
       // (2) 툴팁 숨기기
       this.hoverText.setVisible(false);
+      this.synergyTooltip.setVisible(false);
       // (3) [중요] 조합법 컨테이너 숨기기!
       if (this.recipeContainer) {
         this.recipeContainer.setVisible(false);
@@ -2839,14 +2893,23 @@ class GameScene extends Phaser.Scene {
       if (isBoss) {
         reward = 1000;
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배
-        if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle")) {
+        if (
+          this.round > 90 &&
+          (currentMode === "hard" ||
+            currentMode === "multi" ||
+            currentMode === "aibattle")
+        ) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
         this.showGoldEffect(ex, ey, `+${reward}G`, "#ff0000", 30);
       } else {
         // 멀티/하드 모드 보상
-        if (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle") {
+        if (
+          currentMode === "hard" ||
+          currentMode === "multi" ||
+          currentMode === "aibattle"
+        ) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
           if (this.round > 90) {
@@ -3058,7 +3121,12 @@ class GameScene extends Phaser.Scene {
       }
 
       const tierStr = "★".repeat(unit.dataVal.tier);
-      this.hoverText.setText(`${tierStr} ${unit.dataVal.name}`);
+      const synergyStacks = unit.synergyStacks || 0;
+      const synergyLine =
+        synergyStacks > 0
+          ? `\n시너지 x${synergyStacks}  공격력 ${this.getSynergyMultiplier(unit).toFixed(1)}배`
+          : "";
+      this.hoverText.setText(`${tierStr} ${unit.dataVal.name}${synergyLine}`);
 
       this.hoverText.setStyle({
         fontFamily: "Cafe24ClassicType",
@@ -3567,28 +3635,122 @@ class GameScene extends Phaser.Scene {
   updateSynergies() {
     if (!SYNERGIES || SYNERGIES.length === 0) return;
 
-    // 필드 유닛 키 집합
-    const fieldKeys = new Set();
+    const fieldCounts = new Map();
     this.units.children.iterate((u) => {
       if (u && u.active && u.gridX === -1) {
-        fieldKeys.add(u.unitKey);
+        fieldCounts.set(u.unitKey, (fieldCounts.get(u.unitKey) || 0) + 1);
       }
     });
 
-    // 활성 시너지의 구성원 키 집합
-    const boostedKeys = new Set();
+    const synergyStatuses = [];
+    const stackCounts = new Map();
     for (const syn of SYNERGIES) {
-      if (syn.units.every((k) => fieldKeys.has(k))) {
-        syn.units.forEach((k) => boostedKeys.add(k));
+      const presentUnits = syn.units.filter(
+        (key) => (fieldCounts.get(key) || 0) > 0,
+      );
+      const missingUnits = syn.units.filter(
+        (key) => (fieldCounts.get(key) || 0) === 0,
+      );
+      const active = missingUnits.length === 0;
+
+      synergyStatuses.push({
+        ...syn,
+        active,
+        presentUnits,
+        missingUnits,
+      });
+
+      if (active) {
+        syn.units.forEach((key) => {
+          stackCounts.set(key, (stackCounts.get(key) || 0) + 1);
+        });
       }
     }
 
-    // 모든 유닛에 플래그 설정
     this.units.children.iterate((u) => {
       if (u && u.active) {
-        u.synergyBoosted = boostedKeys.has(u.unitKey);
+        u.synergyStacks = stackCounts.get(u.unitKey) || 0;
+        u.synergyBoosted = u.synergyStacks > 0;
       }
     });
+
+    this.updateSynergyPanel(synergyStatuses);
+  }
+
+  getSynergyMultiplier(unit) {
+    const bonusPerStack = Math.max(0, SYNERGY_DPS_MULTIPLIER - 1);
+    const stacks = unit?.synergyStacks || 0;
+    return 1 + bonusPerStack * stacks;
+  }
+
+  getOwnedUnitCounts() {
+    const counts = {};
+    this.units.children.iterate((u) => {
+      if (u && u.active) {
+        counts[u.unitKey] = (counts[u.unitKey] || 0) + 1;
+      }
+    });
+    return counts;
+  }
+
+  updateSynergyPanel(statuses) {
+    if (!this.synergyTexts) return;
+
+    this.synergyStatuses = statuses;
+    statuses.forEach((status, idx) => {
+      const textObj = this.synergyTexts[idx];
+      if (!textObj) return;
+
+      const progressRatio =
+        status.units.length > 0
+          ? status.presentUnits.length / status.units.length
+          : 0;
+
+      let color = "#d7dde8";
+      let alpha = 0.18;
+      if (status.active) {
+        color = "#ffd166";
+        alpha = 0.9;
+      } else if (progressRatio > 0) {
+        color = progressRatio >= 2 / 3 ? "#7be0ad" : "#8ecae6";
+        alpha = 0.28 + progressRatio * 0.32;
+      }
+
+      textObj.setText(status.name);
+      textObj.setColor(color);
+      textObj.setAlpha(alpha);
+      textObj.setStroke(
+        status.active ? "#5b2c06" : "#101820",
+        status.active ? 4 : 2,
+      );
+      textObj.synergyStatus = status;
+    });
+  }
+
+  showSynergyTooltip(textObj) {
+    if (!this.synergyTooltip || !textObj?.synergyStatus) return;
+
+    const status = textObj.synergyStatus;
+    const missing = status.missingUnits.map(
+      (key) => UNIT_DATA[key]?.name || key,
+    );
+    const lines = [
+      status.name,
+      `배치: ${status.presentUnits.length}/${status.units.length}`,
+    ];
+
+    if (missing.length === 0) {
+      lines.push("효과 활성화");
+    } else {
+      lines.push(`필요 유닛: ${missing.join(", ")}`);
+    }
+
+    this.synergyTooltip
+      .setText(lines.join("\n"))
+      .setPosition(textObj.x - 16, textObj.y)
+      .setOrigin(1, 0)
+      .setVisible(true)
+      .setDepth(10002);
   }
 
   unitAttack(unit) {
@@ -4012,7 +4174,7 @@ class GameScene extends Phaser.Scene {
     b.damage = unit.dataVal.dmg;
     // 시너지 보너스 적용
     if (unit.synergyBoosted) {
-      b.damage = Math.floor(b.damage * SYNERGY_DPS_MULTIPLIER);
+      b.damage = Math.floor(b.damage * this.getSynergyMultiplier(unit));
     }
     b.isCritical = Math.random() < 0.1;
     b.baseSpeed = bulletSpeed; // 기본 속도 저장
@@ -4101,7 +4263,13 @@ class GameScene extends Phaser.Scene {
       if (e.isBoss) {
         reward = 1000;
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배 추가 보상
-        if (this.round > 90 && (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle)) {
+        if (
+          this.round > 90 &&
+          (currentMode === "hard" ||
+            currentMode === "multi" ||
+            currentMode === "aibattle" ||
+            this.isAIBattle)
+        ) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
@@ -4113,7 +4281,12 @@ class GameScene extends Phaser.Scene {
         }
       } else {
         // [하드 모드 & 멀티 모드 & AI 대전] 보상 상향
-        if (currentMode === "hard" || currentMode === "multi" || currentMode === "aibattle" || this.isAIBattle) {
+        if (
+          currentMode === "hard" ||
+          currentMode === "multi" ||
+          currentMode === "aibattle" ||
+          this.isAIBattle
+        ) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
           // 90라운드 이후: 5라운드당 1.1배 추가 보상
@@ -4632,23 +4805,35 @@ class GameScene extends Phaser.Scene {
 
   _initAIBattle() {
     // AI 상태 패널 생성 (화면 오른쪽 상단)
-    const panelX = 1100, panelY = 10;
+    const panelX = 1100,
+      panelY = 10;
     this.aiBattlePanel = this.add.container(panelX, panelY).setDepth(8000);
 
-    const bg = this.add.rectangle(0, 55, 180, 130, 0x000000, 0.75)
-      .setOrigin(0, 0).setStrokeStyle(2, 0x9b59b6);
+    const bg = this.add
+      .rectangle(0, 55, 180, 130, 0x000000, 0.75)
+      .setOrigin(0, 0)
+      .setStrokeStyle(2, 0x9b59b6);
     this.aiBattlePanel.add(bg);
 
-    const titleText = this.add.text(90, 60, "🤖 AI 에이전트", {
-      fontFamily: "Cafe24ClassicType", fontSize: "16px",
-      color: "#9b59b6", align: "center",
-    }).setOrigin(0.5);
+    const titleText = this.add
+      .text(90, 60, "🤖 AI 에이전트", {
+        fontFamily: "Cafe24ClassicType",
+        fontSize: "16px",
+        color: "#9b59b6",
+        align: "center",
+      })
+      .setOrigin(0.5);
     this.aiBattlePanel.add(titleText);
 
-    this.aiStatusText = this.add.text(90, 90, "시뮬레이션 준비 중...", {
-      fontFamily: "Cafe24ClassicType", fontSize: "13px",
-      color: "#ffffff", align: "center", lineSpacing: 4,
-    }).setOrigin(0.5, 0);
+    this.aiStatusText = this.add
+      .text(90, 90, "시뮬레이션 준비 중...", {
+        fontFamily: "Cafe24ClassicType",
+        fontSize: "13px",
+        color: "#ffffff",
+        align: "center",
+        lineSpacing: 4,
+      })
+      .setOrigin(0.5, 0);
     this.aiBattlePanel.add(this.aiStatusText);
 
     // AI 시뮬레이션 시작 (서버 연결 시도 → 실패 시 JS 휴리스틱)
@@ -4668,7 +4853,7 @@ class GameScene extends Phaser.Scene {
         if (this.aiStatusText && this.aiStatusText.active) {
           this.aiStatusText.setText(
             `R${data.round}  DPS: ${(data.fieldDps || 0).toLocaleString()}\n` +
-            `유닛: ${data.fieldUnits || 0}  골드: ${data.gold || 0}`
+              `유닛: ${data.fieldUnits || 0}  골드: ${data.gold || 0}`,
           );
         }
       });
@@ -4678,7 +4863,7 @@ class GameScene extends Phaser.Scene {
         if (this.aiStatusText && this.aiStatusText.active) {
           this.aiStatusText.setText(
             `게임 오버!\n최종: R${data.finalRound}\n` +
-            `DPS: ${(data.fieldDps || 0).toLocaleString()}`
+              `DPS: ${(data.fieldDps || 0).toLocaleString()}`,
           );
         }
       });
@@ -4691,8 +4876,14 @@ class GameScene extends Phaser.Scene {
   _runLocalAISimulation() {
     // 간단한 로컬 AI 시뮬레이션 (서버 없이 동작)
     const ai = {
-      round: 1, gold: GAME_CONFIG.initialGold, lives: GAME_CONFIG.initialLives,
-      grid: [], field: [], fieldDps: 0, isGameOver: false, time: 0,
+      round: 1,
+      gold: GAME_CONFIG.initialGold,
+      lives: GAME_CONFIG.initialLives,
+      grid: [],
+      field: [],
+      fieldDps: 0,
+      isGameOver: false,
+      time: 0,
     };
 
     const getEnemyHp = (round) => {
@@ -4707,10 +4898,12 @@ class GameScene extends Phaser.Scene {
     };
 
     const summonCost = GAME_CONFIG.unitSummonCost || 150;
-    const allT1Keys = Object.keys(UNIT_DATA).filter(k => UNIT_DATA[k].tier === 1);
+    const allT1Keys = Object.keys(UNIT_DATA).filter(
+      (k) => UNIT_DATA[k].tier === 1,
+    );
     const recipeMap = {};
     if (RECIPES) {
-      RECIPES.forEach(r => {
+      RECIPES.forEach((r) => {
         const key = [r.a, r.b].sort().join("+");
         recipeMap[key] = r.result;
       });
@@ -4732,16 +4925,21 @@ class GameScene extends Phaser.Scene {
       while (combined) {
         combined = false;
         const counts = {};
-        ai.grid.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
+        ai.grid.forEach((k) => {
+          counts[k] = (counts[k] || 0) + 1;
+        });
 
-        for (const recipe of (RECIPES || [])) {
+        for (const recipe of RECIPES || []) {
           const { a, b, result } = recipe;
           if (a === b) {
             if ((counts[a] || 0) >= 2) {
               // 그리드에서 2개 제거 후 결과 추가
               let removed = 0;
-              ai.grid = ai.grid.filter(k => {
-                if (k === a && removed < 2) { removed++; return false; }
+              ai.grid = ai.grid.filter((k) => {
+                if (k === a && removed < 2) {
+                  removed++;
+                  return false;
+                }
                 return true;
               });
               ai.grid.push(result);
@@ -4750,10 +4948,17 @@ class GameScene extends Phaser.Scene {
             }
           } else {
             if ((counts[a] || 0) >= 1 && (counts[b] || 0) >= 1) {
-              let ra = false, rb = false;
-              ai.grid = ai.grid.filter(k => {
-                if (!ra && k === a) { ra = true; return false; }
-                if (!rb && k === b) { rb = true; return false; }
+              let ra = false,
+                rb = false;
+              ai.grid = ai.grid.filter((k) => {
+                if (!ra && k === a) {
+                  ra = true;
+                  return false;
+                }
+                if (!rb && k === b) {
+                  rb = true;
+                  return false;
+                }
                 return true;
               });
               ai.grid.push(result);
@@ -4767,10 +4972,14 @@ class GameScene extends Phaser.Scene {
       // 배치 (그리드 → 필드): 높은 티어 우선
       while (ai.grid.length > 0 && ai.field.length < 30) {
         // 가장 높은 티어 유닛 찾기
-        let bestIdx = 0, bestTier = 0;
+        let bestIdx = 0,
+          bestTier = 0;
         ai.grid.forEach((k, i) => {
           const t = UNIT_DATA[k] ? UNIT_DATA[k].tier : 0;
-          if (t > bestTier) { bestTier = t; bestIdx = i; }
+          if (t > bestTier) {
+            bestTier = t;
+            bestIdx = i;
+          }
         });
         const placed = ai.grid.splice(bestIdx, 1)[0];
         ai.field.push(placed);
@@ -4778,7 +4987,9 @@ class GameScene extends Phaser.Scene {
 
       // 저티어 판매 (그리드 가득 차면 T1 판매)
       if (ai.grid.length >= 30) {
-        const t1Idx = ai.grid.findIndex(k => UNIT_DATA[k] && UNIT_DATA[k].tier === 1);
+        const t1Idx = ai.grid.findIndex(
+          (k) => UNIT_DATA[k] && UNIT_DATA[k].tier === 1,
+        );
         if (t1Idx >= 0) {
           ai.grid.splice(t1Idx, 1);
           ai.gold += 50;
@@ -4787,7 +4998,7 @@ class GameScene extends Phaser.Scene {
 
       // DPS 계산
       ai.fieldDps = 0;
-      ai.field.forEach(k => {
+      ai.field.forEach((k) => {
         const ud = UNIT_DATA[k];
         if (ud) ai.fieldDps += (ud.damage || 100) * (ud.attackSpeed || 1);
       });
@@ -4838,8 +5049,10 @@ class GameScene extends Phaser.Scene {
 
       // UI 업데이트
       this.aiBattleState = {
-        round: ai.round, fieldDps: ai.fieldDps,
-        gold: ai.gold, fieldUnits: ai.field.length,
+        round: ai.round,
+        fieldDps: ai.fieldDps,
+        gold: ai.gold,
+        fieldUnits: ai.field.length,
         isGameOver: ai.isGameOver,
       };
 
@@ -4847,13 +5060,13 @@ class GameScene extends Phaser.Scene {
         if (ai.isGameOver) {
           this.aiStatusText.setText(
             `게임 오버!\n최종: R${ai.round}\n` +
-            `DPS: ${ai.fieldDps.toLocaleString()}`
+              `DPS: ${ai.fieldDps.toLocaleString()}`,
           );
           this.aiBattleResult = { finalRound: ai.round, fieldDps: ai.fieldDps };
         } else {
           this.aiStatusText.setText(
             `R${ai.round}  DPS: ${ai.fieldDps.toLocaleString()}\n` +
-            `유닛: ${ai.field.length}  골드: ${ai.gold}`
+              `유닛: ${ai.field.length}  골드: ${ai.gold}`,
           );
         }
       }
@@ -4874,9 +5087,14 @@ class GameScene extends Phaser.Scene {
     const myRound = this.round;
     const aiRound = this.aiBattleResult
       ? this.aiBattleResult.finalRound
-      : (this.aiBattleState ? this.aiBattleState.round : 0);
-    const aiDone = this.aiBattleResult ? true
-      : (this.aiBattleState ? this.aiBattleState.isGameOver : false);
+      : this.aiBattleState
+        ? this.aiBattleState.round
+        : 0;
+    const aiDone = this.aiBattleResult
+      ? true
+      : this.aiBattleState
+        ? this.aiBattleState.isGameOver
+        : false;
 
     let resultText;
     if (!aiDone) {
@@ -4889,11 +5107,17 @@ class GameScene extends Phaser.Scene {
       resultText = `🤝 무승부! 당신: R${myRound}  vs  AI: R${aiRound}`;
     }
 
-    this.add.text(640, 400, resultText, {
-      fontFamily: "Cafe24ClassicType", fontSize: "28px",
-      color: "#f1c40f", stroke: "#000", strokeThickness: 5,
-      align: "center",
-    }).setOrigin(0.5).setDepth(9001);
+    this.add
+      .text(640, 400, resultText, {
+        fontFamily: "Cafe24ClassicType",
+        fontSize: "28px",
+        color: "#f1c40f",
+        stroke: "#000",
+        strokeThickness: 5,
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setDepth(9001);
   }
 
   // =================================================================
@@ -4910,12 +5134,14 @@ class GameScene extends Phaser.Scene {
     const fieldUnits = [];
     this.units.children.iterate((u) => {
       if (u && u.active && u.gridX === -1) {
+        const multiplier = this.getSynergyMultiplier(u);
         fieldUnits.push({
           key: u.unitKey,
           tier: u.dataVal.tier,
           x: u.x,
           y: u.y,
-          dps: (u.dataVal.dmg * 1000) / u.dataVal.speed,
+          synergyStacks: u.synergyStacks || 0,
+          dps: ((u.dataVal.dmg * 1000) / u.dataVal.speed) * multiplier,
         });
       }
     });
@@ -4934,12 +5160,7 @@ class GameScene extends Phaser.Scene {
     const totalFieldDps = fieldUnits.reduce((sum, u) => sum + u.dps, 0);
 
     // 그리드 유닛 카운트 (조합 가능 수 계산용)
-    const gridCounts = {};
-    for (const slot of gridState) {
-      if (slot && slot.key) {
-        gridCounts[slot.key] = (gridCounts[slot.key] || 0) + 1;
-      }
-    }
+    const ownedCounts = this.getOwnedUnitCounts();
 
     // 유효 조합 수 계산
     let validCombines = 0;
@@ -4948,9 +5169,9 @@ class GameScene extends Phaser.Scene {
         const a = recipe.a,
           b = recipe.b;
         if (a === b) {
-          if ((gridCounts[a] || 0) >= 2) validCombines++;
+          if ((ownedCounts[a] || 0) >= 2) validCombines++;
         } else {
-          if ((gridCounts[a] || 0) >= 1 && (gridCounts[b] || 0) >= 1)
+          if ((ownedCounts[a] || 0) >= 1 && (ownedCounts[b] || 0) >= 1)
             validCombines++;
         }
       }
@@ -5014,9 +5235,10 @@ class GameScene extends Phaser.Scene {
         const sellKey = params?.unitKey;
         if (!sellKey) break;
         const sellPrice = this._rlSellUnitByKey(sellKey);
-        actionDesc = sellPrice !== null
-          ? `SELL ${sellKey} (+${sellPrice}g)`
-          : `SELL MISS ${sellKey}`;
+        actionDesc =
+          sellPrice !== null
+            ? `SELL ${sellKey} (+${sellPrice}g)`
+            : `SELL MISS ${sellKey}`;
         break;
       }
 
@@ -5065,7 +5287,10 @@ class GameScene extends Phaser.Scene {
         const orbitR = this.mapRadius - 20;
         const optimalR = Math.max(40, orbitR - unitRange * 0.7);
         const jitter = (Math.random() - 0.5) * 30;
-        const placeDist = Math.max(40, Math.min(optimalR + jitter, orbitR - 40));
+        const placeDist = Math.max(
+          40,
+          Math.min(optimalR + jitter, orbitR - 40),
+        );
         const angle = Math.random() * Math.PI * 2;
         const fx = this.mapCenter.x + Math.cos(angle) * placeDist;
         const fy = this.mapCenter.y + Math.sin(angle) * placeDist;
@@ -5100,17 +5325,16 @@ class GameScene extends Phaser.Scene {
   _rlCombineKeys(keyA, keyB) {
     let unitA = null;
     let unitB = null;
-    for (let y = 0; y < this.gridSize; y++) {
-      for (let x = 0; x < this.gridSize; x++) {
-        const cell = this.gridState[y][x];
-        if (!cell || !cell.active) continue;
-        if (!unitA && cell.unitKey === keyA) {
-          unitA = cell;
-        } else if (!unitB && cell.unitKey === keyB) {
-          unitB = cell;
-        }
+    this.units.children.iterate((unit) => {
+      if (!unit || !unit.active) return;
+      if (!unitA && unit.unitKey === keyA) {
+        unitA = unit;
+        return;
       }
-    }
+      if (!unitB && unit.unitKey === keyB && unit !== unitA) {
+        unitB = unit;
+      }
+    });
 
     if (!unitA || !unitB) {
       return false;
@@ -5128,11 +5352,11 @@ class GameScene extends Phaser.Scene {
         if (!cell || !cell.active) continue;
         if (
           !bestUnit ||
-          cell.dataVal.dmg * 1000 / cell.dataVal.speed >
-            bestUnit.dataVal.dmg * 1000 / bestUnit.dataVal.speed ||
-          (cell.dataVal.dmg * 1000) / cell.dataVal.speed ===
+          (cell.dataVal.dmg * 1000) / cell.dataVal.speed >
+            (bestUnit.dataVal.dmg * 1000) / bestUnit.dataVal.speed ||
+          ((cell.dataVal.dmg * 1000) / cell.dataVal.speed ===
             (bestUnit.dataVal.dmg * 1000) / bestUnit.dataVal.speed &&
-            cell.dataVal.tier > bestUnit.dataVal.tier
+            cell.dataVal.tier > bestUnit.dataVal.tier)
         ) {
           bestUnit = cell;
         }
@@ -5144,19 +5368,15 @@ class GameScene extends Phaser.Scene {
   _rlSelectBestCombineRecipe() {
     if (!RECIPES) return null;
 
-    const gridCounts = {};
-    for (const slot of this.gridState.flat()) {
-      if (slot && slot.active) {
-        gridCounts[slot.unitKey] = (gridCounts[slot.unitKey] || 0) + 1;
-      }
-    }
+    const ownedCounts = this.getOwnedUnitCounts();
 
     let bestRecipe = null;
     for (const recipe of RECIPES) {
       const { a, b, result } = recipe;
-      const valid = a === b
-        ? (gridCounts[a] || 0) >= 2
-        : (gridCounts[a] || 0) >= 1 && (gridCounts[b] || 0) >= 1;
+      const valid =
+        a === b
+          ? (ownedCounts[a] || 0) >= 2
+          : (ownedCounts[a] || 0) >= 1 && (ownedCounts[b] || 0) >= 1;
       if (!valid) continue;
 
       if (!bestRecipe) {
@@ -5171,8 +5391,12 @@ class GameScene extends Phaser.Scene {
 
       if (
         resultData.tier > bestData.tier ||
-        (resultData.tier === bestData.tier && !!recipe.hidden && !bestRecipe.hidden) ||
-        (resultData.tier === bestData.tier && !!recipe.hidden === !!bestRecipe.hidden && resultDps > bestDps)
+        (resultData.tier === bestData.tier &&
+          !!recipe.hidden &&
+          !bestRecipe.hidden) ||
+        (resultData.tier === bestData.tier &&
+          !!recipe.hidden === !!bestRecipe.hidden &&
+          resultDps > bestDps)
       ) {
         bestRecipe = recipe;
       }
@@ -5184,7 +5408,9 @@ class GameScene extends Phaser.Scene {
   _rlSummonUntilFull() {
     let summoned = 0;
     while (this.gold >= GAME_CONFIG.unitSummonCost) {
-      const hasEmpty = this.gridState.flat().some((cell) => !cell || !cell.active);
+      const hasEmpty = this.gridState
+        .flat()
+        .some((cell) => !cell || !cell.active);
       if (!hasEmpty) break;
 
       const prevGold = this.gold;
@@ -5357,37 +5583,51 @@ class GameScene extends Phaser.Scene {
     }
 
     if (models.length === 0) {
-      alert("학습된 모델이 없습니다.\npython/models/ 폴더에 모델을 저장하세요.");
+      alert(
+        "학습된 모델이 없습니다.\npython/models/ 폴더에 모델을 저장하세요.",
+      );
       return;
     }
 
-    const popW = 500, popH = Math.min(60 + models.length * 38, 500);
-    const popX = 640 - popW / 2, popY = 360 - popH / 2;
+    const popW = 500,
+      popH = Math.min(60 + models.length * 38, 500);
+    const popX = 640 - popW / 2,
+      popY = 360 - popH / 2;
 
     this.modelSelectorContainer = this.add.container(0, 0).setDepth(11000);
 
     // 배경 어둡게
-    const dimBg = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.6)
+    const dimBg = this.add
+      .rectangle(640, 360, 1280, 720, 0x000000, 0.6)
       .setInteractive();
     this.modelSelectorContainer.add(dimBg);
 
     // 팝업 배경
-    const popBg = this.add.rectangle(640, 360, popW, popH, 0x1a1a2e)
+    const popBg = this.add
+      .rectangle(640, 360, popW, popH, 0x1a1a2e)
       .setStrokeStyle(2, 0x00ff88);
     this.modelSelectorContainer.add(popBg);
 
     // 타이틀
-    const title = this.add.text(640, popY + 15, "📂 모델 선택", {
-      fontSize: "18px", fontFamily: "monospace",
-      color: "#00ff88", fontStyle: "bold",
-    }).setOrigin(0.5);
+    const title = this.add
+      .text(640, popY + 15, "📂 모델 선택", {
+        fontSize: "18px",
+        fontFamily: "monospace",
+        color: "#00ff88",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
     this.modelSelectorContainer.add(title);
 
     // 닫기 버튼
-    const closeBtn = this.add.text(popX + popW - 15, popY + 10, "✕", {
-      fontSize: "20px", fontFamily: "monospace",
-      color: "#ff4444",
-    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    const closeBtn = this.add
+      .text(popX + popW - 15, popY + 10, "✕", {
+        fontSize: "20px",
+        fontFamily: "monospace",
+        color: "#ff4444",
+      })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
     closeBtn.on("pointerdown", () => {
       this.modelSelectorContainer.destroy();
       this.modelSelectorContainer = null;
@@ -5413,13 +5653,17 @@ class GameScene extends Phaser.Scene {
         labelText = `   ${m.algorithm}/${m.filename}  (${m.size})`;
       }
 
-      const btn = this.add.text(640, itemY, labelText, {
-        fontSize: "14px", fontFamily: "monospace",
-        color: labelColor,
-        backgroundColor: "#2d2d44",
-        padding: { x: 10, y: 6 },
-        fixedWidth: popW - 40,
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      const btn = this.add
+        .text(640, itemY, labelText, {
+          fontSize: "14px",
+          fontFamily: "monospace",
+          color: labelColor,
+          backgroundColor: "#2d2d44",
+          padding: { x: 10, y: 6 },
+          fixedWidth: popW - 40,
+        })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
 
       btn.on("pointerover", () => btn.setBackgroundColor("#3d3d5c"));
       btn.on("pointerout", () => btn.setBackgroundColor("#2d2d44"));

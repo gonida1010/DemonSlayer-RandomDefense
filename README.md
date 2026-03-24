@@ -41,7 +41,7 @@
   - **다중 알고리즘:** MaskablePPO, RecurrentPPO, DQN 중 선택 가능.
   - **알고리즘별 리워드:** 각 알고리즘 특성에 맞춘 분리된 보상 파일 (rewards_ppo/dqn/recurrent).
   - **Python Gymnasium 환경:** 게임 전체 메커니즘을 순수 Python으로 시뮬레이션 (빠른 학습).
-  - **170 이산 행동:** 대기 / 소환 / 배치(57종) / 판매(57종) / 조합(54종, 히든 7개 포함).
+  - **173 이산 행동:** 대기 / 소환 / 배치(57종) / 판매(57종) / 조합(54종, 히든 7개 포함) / 매크로 3종.
   - **Action Masking:** 불가능한 행동 자동 차단 (골드 부족, 그리드 가득 참, 재료 없음 등).
   - **히든 조합 탐색:** 에이전트가 히든 레시피 발견 시 **1.5배 보상** 보너스.
   - **시너지 시스템:** T6 유닛 3명 조합 시 공격력 **1.2배** 보너스 (10개 시너지).
@@ -140,8 +140,8 @@
 ┌─────────────────┐         ┌───────────────────────┐
 │  Python 환경     │  학습    │  MaskablePPO           │
 │  (game_env.py)  │◄───────►│  RecurrentPPO          │
-│  - 170 actions  │         │  DQN (MaskedDQN)       │
-│  - 67-dim obs   │         │  (train.py)            │
+│  - 173 actions  │         │  DQN (MaskedDQN)       │
+│  - 73-dim obs   │         │  (train.py)            │
 │  - action mask  │         │  - 알고리즘별 리워드     │
 │  - range DPS    │         │  - 히든 조합 1.5x       │
 │  - 시너지 1.2x  │         │  - 시너지 보너스         │
@@ -157,31 +157,40 @@
 └─────────────────┘             └───────────────────┘
 ```
 
-### 관측 공간 (67차원)
+### 관측 공간 (73차원)
 
-| 인덱스 | 항목                       | 정규화       |
-| :----: | :------------------------- | :----------- |
-|   0    | 현재 라운드                | / 200        |
-|   1    | 골드                       | / 10000      |
-|   2    | 남은 시간                  | / 60         |
-|   3    | 적 수                      | / maxEnemies |
-|   4    | 보스 존재 여부             | 0 or 1       |
-|   5    | 보스 HP 비율               | 0~1          |
-|   6    | 필드 총 DPS                | / 500000     |
-|   7    | 필드 유닛 수               | / 30         |
-|   8    | 빈 그리드 수               | / 36         |
-|   9    | 유효 조합 수               | / 54         |
-| 10-66  | 유닛 타입별 보유 수 (57종) | / 10         |
+| 인덱스 | 항목                              | 정규화       |
+| :----: | :-------------------------------- | :----------- |
+|   0    | 현재 라운드                       | / 200        |
+|   1    | 골드                              | / 10000      |
+|   2    | 남은 시간                         | / 60         |
+|   3    | 적 수                             | / maxEnemies |
+|   4    | 보스 존재 여부                    | 0 or 1       |
+|   5    | 보스 HP 비율                      | 0~1          |
+|   6    | 필드 총 DPS                       | / 500000     |
+|   7    | 필드 유닛 수                      | / 30         |
+|   8    | 빈 그리드 수                      | / 36         |
+|   9    | 유효 조합 수                      | / 54         |
+|   10   | 현재 라운드 요구 DPS              | / 500000     |
+|   11   | 현재 DPS / 요구 DPS               | / 3          |
+|   12   | 다음 보스까지 남은 라운드         | / bossInterval |
+|   13   | 활성 시너지 수                    | / 10         |
+|   14   | 고티어 비율 (T4+)                 | 0~1          |
+|   15   | 현재 가능한 최고 조합 결과 티어   | / 6          |
+| 16-72  | 유닛 타입별 보유 수 (57종)        | / 10         |
 
-### 행동 공간 (170 이산 행동)
+### 행동 공간 (173 이산 행동)
 
-|  범위   | 행동    | 설명                                 |
-| :-----: | :------ | :----------------------------------- |
-|    0    | WAIT    | 3초 시뮬레이션 (적 스폰 + 전투)      |
-|    1    | SUMMON  | 150골드 소모, 랜덤 유닛 소환         |
-|  2-58   | PLACE   | 그리드 유닛 57종 중 하나를 필드 배치 |
-| 59-115  | SELL    | 유닛 57종 중 하나를 판매 (골드 회수) |
-| 116-169 | COMBINE | 54개 레시피 중 하나로 조합           |
+|  범위   | 행동              | 설명                                 |
+| :-----: | :---------------- | :----------------------------------- |
+|    0    | WAIT              | 2초 시뮬레이션 (적 스폰 + 전투)      |
+|    1    | SUMMON            | 150골드 소모, 랜덤 유닛 소환         |
+|  2-58   | PLACE             | 그리드 유닛 57종 중 하나를 필드 배치 |
+| 59-115  | SELL              | 유닛 57종 중 하나를 판매 (골드 회수) |
+| 116-169 | COMBINE           | 54개 레시피 중 하나로 조합           |
+|   170   | PLACE_BEST_DPS    | 그리드에서 최고 DPS 유닛 자동 배치   |
+|   171   | COMBINE_BEST_TIER | 가능한 최고 티어 조합 자동 실행      |
+|   172   | SUMMON_UNTIL_FULL | 골드 또는 빈칸이 소진될 때까지 소환   |
 
 ### 사거리(Range) 기반 전투 모델
 
@@ -204,14 +213,15 @@
 
 > 알고리즘별 리워드 파일이 분리되어 있습니다 (rewards_ppo / rewards_dqn / rewards_recurrent).
 
-| 이벤트       | 보상 (PPO 기준)       | 설명                          |
-| :----------- | :-------------------- | :---------------------------- |
-| 라운드 생존  | +1.0 + round/30       | R1=1.03, R50=2.67, R89=3.97   |
-| 유닛 배치    | 0.1 × tier            | 조합 > 배치 유도              |
-| 조합 성공    | 0.5 × tier²           | T4=8.0, T5=12.5, T6=18.0      |
-| 히든 조합    | 조합 보상 × **1.5**   | 히든 레시피 발견 시 추가 보너스 |
-| 보스 처치    | +10.0                 | 보스 라운드 클리어            |
-| 적 초과/실패 | -3.0                  | 게임 오버 패널티              |
+| 이벤트       | 보상 (PPO 기준)                    | 설명                             |
+| :----------- | :--------------------------------- | :------------------------------- |
+| 라운드 생존  | +1.5 + round/20, 10R 단위 추가 보너스 | 생존 목표를 더 강하게 유도        |
+| 유닛 배치    | 0.1 × tier                         | 배치는 보조 보상                  |
+| 조합 성공    | 0.18 × tier² + 고티어 추가 보너스  | T5/T6 조합을 더 강하게 유도       |
+| 히든 조합    | 조합 보상 × **1.5**                | 히든 레시피 발견 시 추가 보너스    |
+| 보스 처치    | +18.0                              | 보스 클리어 가치 상향             |
+| 판매         | 0.0                                | 판매 자체는 보상하지 않음         |
+| 적 초과/실패 | -10.0                              | 게임 오버 패널티 강화             |
 
 ### 사용법
 
@@ -236,24 +246,47 @@ cd python
 python train.py
 
 # RecurrentPPO (LSTM) 학습
-python train.py --algo recurrent
+python train.py --algorithm recurrent
 
 # DQN 학습
-python train.py --algo dqn
+python train.py --algorithm dqn
 
 # 최신 체크포인트에서 자동 이어하기
 python train.py --resume
 
 # 특정 체크포인트 지정도 가능
-python train.py --resume ./models/demon_slayer_rl_1400000_steps.zip
+python train.py --resume ./models/ppo/demon_slayer_1000000_steps.zip
 ```
 
-- 학습 과정은 TensorBoard로 모니터링: `tensorboard --logdir python/tb_logs`
+- 학습 과정 모니터링
+
+```bash
+# python 폴더 안에서 실행할 때
+tensorboard --logdir tb_logs
+
+# 프로젝트 루트에서 실행할 때
+tensorboard --logdir python/tb_logs
+```
+
+- Python 3.12 가상환경에서 `ModuleNotFoundError: No module named 'pkg_resources'`가 뜨면 먼저 아래를 실행합니다.
+
+```bash
+python -m pip install setuptools
+```
 
 **3단계: 학습 결과 평가**
 
 ```bash
-python train.py --eval --resume
+cd python
+
+# PPO 베스트 모델 평가
+python train.py --eval models/ppo/best_model.zip --algorithm ppo
+
+# RecurrentPPO 베스트 모델 평가
+python train.py --eval models/recurrent/best_model.zip --algorithm recurrent
+
+# DQN 베스트 모델 평가
+python train.py --eval models/dqn/best_model.zip --algorithm dqn
 ```
 
 **4단계: 실제 게임에서 시각적 테스트**
@@ -265,11 +298,35 @@ node server.js
 
 # 터미널 2: RL 브릿지 실행
 cd python
-python rl_bridge.py --model models/demon_slayer_final.zip
+python rl_bridge.py --model models/ppo/best_model.zip --algorithm ppo
 
 # 브라우저에서 접속: http://localhost:3000/?rl=true
 # → 좌상단 RL 오버레이에서 AI 행동/DPS/라운드 실시간 확인
 ```
+
+프로젝트 루트에서 바로 실행하려면 아래처럼 경로를 모두 포함해야 합니다.
+
+```bash
+python python/rl_bridge.py --model python/models/ppo/best_model.zip --algorithm ppo
+```
+
+베스트 모델 관전 흐름은 아래 순서가 맞습니다.
+
+```bash
+# 1. 학습은 python 폴더에서 실행
+cd python
+python train.py --algorithm ppo --resume
+
+# 2. 다른 터미널에서 서버 실행
+cd ..
+node server.js
+
+# 3. 다른 터미널에서 현재 베스트 모델 관전
+cd python
+python rl_bridge.py --model models/ppo/best_model.zip --algorithm ppo
+```
+
+- RL 오버레이의 `모델 선택` 버튼으로 `python/models/{ppo,recurrent,dqn}` 아래의 다른 모델도 즉시 교체해서 볼 수 있습니다.
 
 ---
 

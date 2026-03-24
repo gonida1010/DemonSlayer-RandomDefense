@@ -25,7 +25,8 @@ N_ENVS = 6                        # 병렬 환경 수 (CPU 코어에 맞게 조�
 EVAL_EPISODES = 100                # 평가 에피소드 수
 DEVICE = "auto"                   # "auto", "cuda", "cpu"
 PROGRESS_BAR = True               # tqdm 진행률 바
-PRINT_INTERVAL = 10000              # 에피소드 통계 출력 간격
+PRINT_INTERVAL = 30000            # 커스텀 콘솔 출력 간격 (episode 기준)
+LOG_INTERVAL = 10                # SB3 표 로그 출력 간격 (iteration 기준)
 
 # =============================================================
 # 2. 저장 / 로깅 경로 (알고리즘별 분리)

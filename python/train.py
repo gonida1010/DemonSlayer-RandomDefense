@@ -135,13 +135,14 @@ class GameMetricsCallback(BaseCallback):
                         if not is_new_best:
                             is_new_best = True  # 최고 라운드 갱신도 저장
 
+                    self.logger.record('game/best_avg_round', self.best_avg_round)
+                    self.logger.record('game/best_avg_reward', self.best_avg_reward)
+                    self.logger.record('game/best_max_round', self.best_max_round)
+                    self.logger.record('game/best_score', self.best_score)
+
                     if is_new_best:
                         best_path = os.path.join(self.save_dir, 'best_model')
                         self.model.save(best_path)
-                        self.logger.record('game/best_avg_round', self.best_avg_round)
-                        self.logger.record('game/best_avg_reward', self.best_avg_reward)
-                        self.logger.record('game/best_max_round', self.best_max_round)
-                        self.logger.record('game/best_score', self.best_score)
 
                 if self.episode_count % cfg.PRINT_INTERVAL == 0:
                     recent_r = self.episode_rounds[-100:]
@@ -523,6 +524,7 @@ def _run_learning(model, timesteps, callbacks):
         total_timesteps=timesteps,
         callback=callbacks,
         progress_bar=use_progress_bar,
+        log_interval=cfg.LOG_INTERVAL,
     )
 
 

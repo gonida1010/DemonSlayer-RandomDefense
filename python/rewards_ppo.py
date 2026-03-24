@@ -42,7 +42,11 @@ def combine_reward(result_tier):
     """조합: 생존 보상을 압도하지 않도록 축소
     T2=0.72, T3=1.62, T4=2.88, T5=4.50, T6=6.48
     """
-    return 0.18 * result_tier * result_tier
+    base = 0.18 * result_tier * result_tier
+    high_tier_bonus = 0.0
+    if result_tier >= 5:
+        high_tier_bonus += 2.0 + (result_tier - 5) * 2.0
+    return base + high_tier_bonus
 
 
 # =================================================================

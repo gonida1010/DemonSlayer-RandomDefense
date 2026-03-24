@@ -83,3 +83,17 @@ INVALID_ACTION_PENALTY = -0.01
 
 # 히든 조합 배율
 HIDDEN_COMBINE_MULTIPLIER = 1.5
+
+# 보스 집중 공격
+FOCUS_BOSS_REWARD = 0.5  # 보스 집중 모드 활성화 보상
+
+
+def boss_damage_progress_reward(hp_drop_ratio, round_num):
+    """보스 HP 감소에 따른 중간 보상.
+    후반 보스일수록 체력이 높아 오래 걸리므로 진행 보상을 줌.
+    hp_drop_ratio: 이번 틱에서 줄어든 HP 비율 (0~1)
+    """
+    base = hp_drop_ratio * 10.0
+    if round_num > 50:
+        base *= 1.0 + (round_num - 50) * 0.02
+    return base

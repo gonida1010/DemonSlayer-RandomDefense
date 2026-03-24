@@ -873,6 +873,7 @@ class GameScene extends Phaser.Scene {
     this.isGameOver = false;
 
     this.bossSpawned = false;
+    this.focusBoss = false;
 
     this.gridSize = 6;
     this.cellSize = 60;
@@ -2149,17 +2150,17 @@ class GameScene extends Phaser.Scene {
       .text(
         synergyPanelX + synergyPanelWidth - 10,
         synergyPanelY + 8,
-        "SYNERGY",
+        "시너지 효과",
         {
           fontFamily: "Cafe24ClassicType",
-          fontSize: "18px",
+          fontSize: "24px",
           color: "#f8fafc",
           stroke: "#000000",
-          strokeThickness: 3,
+          strokeThickness: 4,
         },
       )
       .setOrigin(1, 0)
-      .setAlpha(0.72)
+      .setAlpha(0.92)
       .setDepth(115)
       .setScrollFactor(0);
 
@@ -2181,19 +2182,19 @@ class GameScene extends Phaser.Scene {
       const textObj = this.add
         .text(
           synergyPanelX + synergyPanelWidth - 10,
-          synergyPanelY + 34 + idx * 26,
+          synergyPanelY + 44 + idx * 18,
           synergy.name,
           {
             fontFamily: "Cafe24ClassicType",
-            fontSize: "22px",
+            fontSize: "13px",
             color: "#d7dde8",
             stroke: "#101820",
-            strokeThickness: 3,
+            strokeThickness: 2,
             align: "right",
           },
         )
         .setOrigin(1, 0)
-        .setAlpha(0.34)
+        .setAlpha(0.52)
         .setDepth(115)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
@@ -2706,6 +2707,7 @@ class GameScene extends Phaser.Scene {
     this.updateBackground();
     this.currentTime = GAME_CONFIG.roundTime;
     this.bossSpawned = false;
+    this.focusBoss = false; // 라운드 전환 시 보스 집중 해제
     this.spawnTimer.paused = false;
 
     this.txtRound.setText(`ROUND: ${this.round}`);
@@ -3749,14 +3751,14 @@ class GameScene extends Phaser.Scene {
           ? status.presentUnits.length / status.units.length
           : 0;
 
-      let color = "#d7dde8";
-      let alpha = 0.34;
+      let color = "#cfd8e3";
+      let alpha = 0.52;
       if (status.active) {
         color = "#ffd166";
         alpha = 0.9;
       } else if (progressRatio > 0) {
         color = progressRatio >= 2 / 3 ? "#7be0ad" : "#8ecae6";
-        alpha = 0.46 + progressRatio * 0.28;
+        alpha = 0.62 + progressRatio * 0.2;
       }
 
       textObj.setText(status.name);
@@ -3805,19 +3807,42 @@ class GameScene extends Phaser.Scene {
     const adjustedSpeed = unit.dataVal.speed / timeScale;
 
     if (now - unit.lastFired < adjustedSpeed) return;
-    let closest = null;
-    let minDist = unit.dataVal.range;
-    this.enemies.children.iterate((e) => {
-      if (!e.active) return;
-      const dist = Phaser.Math.Distance.Between(unit.x, unit.y, e.x, e.y);
-      if (dist < minDist) {
-        minDist = dist;
-        closest = e;
-      }
-    });
-    if (closest) {
+
+    let target = null;
+
+    // 보스 집중 모드: 보스가 사거리 내에 있으면 우선 타겟
+    if (this.focusBoss) {
+      let bossTarget = null;
+      let bossDist = Infinity;
+      this.enemies.children.iterate((e) => {
+        if (!e.active || !e.isBoss) return;
+        const dist = Phaser.Math.Distance.Between(unit.x, unit.y, e.x, e.y);
+        if (dist < unit.dataVal.range && dist < bossDist) {
+          bossDist = dist;
+          bossTarget = e;
+        }
+      });
+      if (bossTarget) target = bossTarget;
+    }
+
+    // 보스 타겟이 없으면 일반 최근접 타겟
+    if (!target) {
+      let closest = null;
+      let minDist = unit.dataVal.range;
+      this.enemies.children.iterate((e) => {
+        if (!e.active) return;
+        const dist = Phaser.Math.Distance.Between(unit.x, unit.y, e.x, e.y);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = e;
+        }
+      });
+      target = closest;
+    }
+
+    if (target) {
       unit.lastFired = now;
-      this.fireBullet(unit, closest);
+      this.fireBullet(unit, target);
     }
   }
 
@@ -5231,6 +5256,7 @@ class GameScene extends Phaser.Scene {
       maxEnemies: GAME_CONFIG.maxEnemies,
       totalFieldDps: totalFieldDps,
       validCombines: validCombines,
+      focusBoss: this.focusBoss,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
     };
@@ -5302,6 +5328,12 @@ class GameScene extends Phaser.Scene {
         } else {
           actionDesc = "COMBINE_BEST MISS";
         }
+        break;
+      }
+
+      case "focus_boss": {
+        this.focusBoss = !this.focusBoss;
+        actionDesc = this.focusBoss ? "FOCUS_BOSS ON" : "FOCUS_BOSS OFF";
         break;
       }
 

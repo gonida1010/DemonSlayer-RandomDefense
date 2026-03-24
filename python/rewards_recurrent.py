@@ -102,3 +102,14 @@ INVALID_ACTION_PENALTY = -0.01
 
 # 히든 조합 배율
 HIDDEN_COMBINE_MULTIPLIER = 1.5
+
+# 보스 집중 공격 (LSTM이 보스전 타이밍에 집중 패턴 학습)
+FOCUS_BOSS_REWARD = 0.6
+
+
+def boss_damage_progress_reward(hp_drop_ratio, round_num):
+    """보스 HP 감소 진행 보상 (LSTM: 장기 보스전 진행 추적)"""
+    base = hp_drop_ratio * 12.0
+    if round_num > 50:
+        base *= 1.0 + (round_num - 50) * 0.025
+    return base

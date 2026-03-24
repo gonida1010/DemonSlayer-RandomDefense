@@ -19,7 +19,7 @@ from game_data import (
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
-    ACTION_MACRO_SUMMON_ALL, OBS_UNIT_COUNT_START,
+    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, OBS_UNIT_COUNT_START,
     get_normal_enemy_hp, get_kill_gold, get_boss_hp, get_boss_kill_gold,
     get_required_dps,
     HIDDEN_RECIPE_INDICES, SYNERGIES, SYNERGY_DPS_MULTIPLIER,
@@ -30,7 +30,7 @@ class DemonSlayerEnv(gym.Env):
     """
     귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 (하드 모드, 무한 라운드)
 
-        관측 공간 (73차원):
+        관측 공간 (74차원):
       [0]  round / 200 (무한 모드: 200으로 정규화)
       [1]  gold / 10000
       [2]  time_remaining / 60
@@ -47,9 +47,10 @@ class DemonSlayerEnv(gym.Env):
             [13] active_synergy_count / total_synergies
             [14] high_tier_ratio (T4+) 
             [15] best_valid_combine_tier / 6
-            [16..72] 유닛 타입별 보유 수 (그리드+필드) / 10
+            [16] focus_boss (0 or 1)
+            [17..73] 유닛 타입별 보유 수 (그리드+필드) / 10
 
-        행동 공간 (173개 이산 행동):
+        행동 공간 (174개 이산 행동):
       0: 대기 (WAIT)
       1: 소환 (SUMMON)
       2~58:  배치 (PLACE unit_type)
@@ -58,6 +59,7 @@ class DemonSlayerEnv(gym.Env):
             170: 최고 DPS 유닛 배치
             171: 최고 티어 조합 실행
             172: 골드 소진까지 소환
+            173: 보스 집중 공격 토글 (FOCUS_BOSS)
     """
 
     metadata = {'render_modes': []}
@@ -98,13 +100,16 @@ class DemonSlayerEnv(gym.Env):
 
         self.game_over = False
         self.boss_spawned = False
+        self.focus_boss = False
         self.spawn_acc = 0.0
         self.total_steps = 0
         self._recent_combines = 0
         self.invalid_action_remaps = 0
+        self._prev_boss_hp_ratio = 1.0
 
         self._field_dps_cache = 0.0
         self._field_boss_dps_cache = 0.0
+        self._field_boss_focus_dps_cache = 0.0
         self._update_field_dps()
 
         return self._get_obs(), {}
@@ -177,6 +182,11 @@ class DemonSlayerEnv(gym.Env):
         if mask[ACTION_SUMMON]:
             mask[ACTION_MACRO_SUMMON_ALL] = True
 
+        # FOCUS_BOSS: 보스 라운드이고 필드 유닛이 있을 때 유효
+        is_boss_round = (self.round % GAME_CONFIG['bossInterval'] == 0)
+        if is_boss_round and self.field_units:
+            mask[ACTION_FOCUS_BOSS] = True
+
         return mask
 
     # =================================================================
@@ -222,6 +232,9 @@ class DemonSlayerEnv(gym.Env):
 
         best_combine_tier = self._get_best_valid_combine_tier()
         obs[15] = best_combine_tier / 6.0
+
+        # 보스 집중 공격 상태
+        obs[16] = 1.0 if self.focus_boss else 0.0
 
         # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
@@ -282,6 +295,9 @@ class DemonSlayerEnv(gym.Env):
 
         if action == ACTION_MACRO_SUMMON_ALL:
             return self._summon_until_depleted()
+
+        if action == ACTION_FOCUS_BOSS:
+            return self._toggle_focus_boss()
 
         return self.rewards.INVALID_ACTION_PENALTY
 
@@ -488,6 +504,17 @@ class DemonSlayerEnv(gym.Env):
 
         return self.rewards.SUMMON_REWARD * min(summoned, 4) * 0.5
 
+    def _toggle_focus_boss(self):
+        """보스 집중 공격 모드 토글"""
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        if not boss_alive:
+            return self.rewards.INVALID_ACTION_PENALTY
+
+        self.focus_boss = not self.focus_boss
+        if self.focus_boss and hasattr(self.rewards, 'FOCUS_BOSS_REWARD'):
+            return self.rewards.FOCUS_BOSS_REWARD
+        return 0.0
+
     def _get_best_valid_combine_recipe_idx(self):
         owned_counts = self._get_owned_unit_counts()
 
@@ -568,7 +595,9 @@ class DemonSlayerEnv(gym.Env):
             if not self.boss_spawned:
                 self._spawn_boss()
                 self.boss_spawned = True
+                self._prev_boss_hp_ratio = 1.0
         else:
+            self.focus_boss = False  # 비보스 라운드에서는 자동 해제
             if self.time_remaining > 5:
                 self.spawn_acc += dt
                 interval = GAME_CONFIG['spawnInterval']
@@ -578,6 +607,22 @@ class DemonSlayerEnv(gym.Env):
 
         # --- 2. 전투 ---
         reward += self._apply_combat(dt)
+
+        # --- 2.5. 보스 HP 진행 보상 ---
+        if is_boss_round:
+            boss = None
+            for e in self.enemies:
+                if e['is_boss']:
+                    boss = e
+                    break
+            if boss:
+                current_ratio = boss['hp'] / boss['max_hp']
+                hp_drop = self._prev_boss_hp_ratio - current_ratio
+                if hp_drop > 0 and hasattr(self.rewards, 'boss_damage_progress_reward'):
+                    reward += self.rewards.boss_damage_progress_reward(hp_drop, self.round)
+                self._prev_boss_hp_ratio = current_ratio
+            else:
+                self._prev_boss_hp_ratio = 1.0
 
         # --- 3. 위험도 패널티 ---
         if self.enemies:
@@ -620,7 +665,13 @@ class DemonSlayerEnv(gym.Env):
     def _apply_combat(self, dt):
         reward = 0.0
         has_boss = any(e['is_boss'] for e in self.enemies)
-        raw_dps = self._field_boss_dps_cache if has_boss else self._field_dps_cache
+
+        if has_boss and self.focus_boss:
+            raw_dps = self._field_boss_focus_dps_cache
+        elif has_boss:
+            raw_dps = self._field_boss_dps_cache
+        else:
+            raw_dps = self._field_dps_cache
         total_dps = raw_dps * self.COMBAT_EFFICIENCY
         damage_pool = total_dps * dt
 
@@ -694,13 +745,23 @@ class DemonSlayerEnv(gym.Env):
         """
         return 0.5 + 0.5 * min(1.0, unit_range / 200.0)
 
+    @staticmethod
+    def _range_efficiency_focus(unit_range):
+        """보스 집중 모드 사거리 효율. 유닛이 보스를 우선 타겟하므로
+        사거리 페널티가 경감됨 (0.75 + 0.25 * min(1.0, range/200)).
+          T1(80): 85%  T2(100): 88%  T3(120): 90%
+          T4(150): 94%  T5(180): 97%  T6(230): 100%
+        """
+        return 0.75 + 0.25 * min(1.0, unit_range / 200.0)
+
     def _update_field_dps(self):
-        """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 분리, 시너지 적용)"""
+        """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 + 보스집중용 분리, 시너지 적용)"""
         bonus_per_stack = max(0.0, SYNERGY_DPS_MULTIPLIER - 1.0)
         stack_counts = self._get_synergy_stack_counts()
 
         raw_dps = 0.0
         boss_dps = 0.0
+        boss_focus_dps = 0.0
         for key in self.field_units:
             d = UNIT_DATA[key]
             dps = d['dps']
@@ -709,8 +770,10 @@ class DemonSlayerEnv(gym.Env):
                 dps *= 1.0 + bonus_per_stack * stacks
             raw_dps += dps
             boss_dps += dps * self._range_efficiency(d['range'])
-        self._field_dps_cache = raw_dps           # 일반 적 대상
-        self._field_boss_dps_cache = boss_dps     # 보스 대상
+            boss_focus_dps += dps * self._range_efficiency_focus(d['range'])
+        self._field_dps_cache = raw_dps                       # 일반 적 대상
+        self._field_boss_dps_cache = boss_dps                 # 보스 대상 (분산)
+        self._field_boss_focus_dps_cache = boss_focus_dps     # 보스 집중 대상
 
     def _get_synergy_stack_counts(self):
         """활성 시너지에 포함된 각 필드 유닛의 중첩 수 반환"""

@@ -37,7 +37,7 @@ from game_data import (
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
-    ACTION_MACRO_SUMMON_ALL, OBS_UNIT_COUNT_START,
+    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, OBS_UNIT_COUNT_START,
     get_required_dps, SYNERGIES,
 )
 
@@ -221,6 +221,9 @@ class RLBridge:
                 best_combine_tier = max(best_combine_tier, UNIT_DATA[recipe['result']]['tier'])
         obs[15] = best_combine_tier / 6.0
 
+        # 보스 집중 공격 상태
+        obs[16] = 1.0 if state.get('focusBoss', False) else 0.0
+
         for i in range(NUM_UNIT_TYPES):
             obs[OBS_UNIT_COUNT_START + i] = min(counts[i] / 10.0, 1.0)
 
@@ -260,6 +263,13 @@ class RLBridge:
         if mask[ACTION_SUMMON]:
             mask[ACTION_MACRO_SUMMON_ALL] = True
 
+        # FOCUS_BOSS: 보스가 살아있고 필드 유닛이 있을 때
+        enemies = state.get('enemies', [])
+        boss_alive = any(e.get('isBoss') for e in enemies)
+        field_units = state.get('fieldUnits', [])
+        if boss_alive and len(field_units) > 0:
+            mask[ACTION_FOCUS_BOSS] = True
+
         return mask
 
     def action_to_command(self, action):
@@ -283,6 +293,8 @@ class RLBridge:
             return {'type': 'combine_best_tier', 'params': {}}
         if action == ACTION_MACRO_SUMMON_ALL:
             return {'type': 'summon_all', 'params': {}}
+        if action == ACTION_FOCUS_BOSS:
+            return {'type': 'focus_boss', 'params': {}}
         return {'type': 'wait', 'params': {}}
 
     def predict_action(self, obs, mask):

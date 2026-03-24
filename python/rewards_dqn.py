@@ -83,3 +83,14 @@ INVALID_ACTION_PENALTY = -0.02  # DQN에서 무효 행동 더 강하게 패널�
 
 # 히든 조합 배율
 HIDDEN_COMBINE_MULTIPLIER = 1.5
+
+# 보스 집중 공격 (DQN: 즉시 보상으로 집중 유도)
+FOCUS_BOSS_REWARD = 0.4
+
+
+def boss_damage_progress_reward(hp_drop_ratio, round_num):
+    """보스 HP 감소 진행 보상 (DQN: 밀집 보상으로 단계적 학습)"""
+    base = hp_drop_ratio * 8.0
+    if round_num > 50:
+        base *= 1.0 + (round_num - 50) * 0.015
+    return base

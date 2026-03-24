@@ -2153,19 +2153,7 @@ class GameScene extends Phaser.Scene {
       .setDepth(115)
       .setScrollFactor(0);
 
-    this.synergyTooltip = this.add
-      .text(0, 0, "", {
-        fontFamily: "Cafe24ClassicType",
-        fontSize: "16px",
-        color: "#f8f9fa",
-        backgroundColor: "#000000bb",
-        stroke: "#000000",
-        strokeThickness: 3,
-        padding: { x: 10, y: 8 },
-        align: "right",
-      })
-      .setVisible(false)
-      .setDepth(10002);
+    this.synergyTooltipContainer = this.add.container(0, 0).setVisible(false).setDepth(10002);
 
     (SYNERGIES || []).forEach((synergy, idx) => {
       const textObj = this.add
@@ -2189,7 +2177,7 @@ class GameScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
 
       textObj.on("pointerover", () => this.showSynergyTooltip(textObj));
-      textObj.on("pointerout", () => this.synergyTooltip.setVisible(false));
+      textObj.on("pointerout", () => this.synergyTooltipContainer.setVisible(false));
       this.synergyTexts.push(textObj);
     });
 
@@ -2213,7 +2201,7 @@ class GameScene extends Phaser.Scene {
       this.statText.setText("유닛을 클릭하면 정보가 표시됩니다.");
       // (2) 툴팁 숨기기
       this.hoverText.setVisible(false);
-      this.synergyTooltip.setVisible(false);
+      this.synergyTooltipContainer.setVisible(false);
       // (3) [중요] 조합법 컨테이너 숨기기!
       if (this.recipeContainer) {
         this.recipeContainer.setVisible(false);
@@ -3154,11 +3142,11 @@ class GameScene extends Phaser.Scene {
           break;
       }
 
-      const tierStr = "★".repeat(unit.dataVal.tier);
       const synergyStacks = unit.synergyStacks || 0;
+      const tierStr = this._buildStarString(unit.dataVal.tier, synergyStacks);
       const synergyLine =
         synergyStacks > 0
-          ? `\n시너지 x${synergyStacks}  공격력 ${this.getSynergyMultiplier(unit).toFixed(1)}배`
+          ? `\n공격력 ${this.getSynergyMultiplier(unit).toFixed(1)}배`
           : "";
       this.hoverText.setText(`${tierStr} ${unit.dataVal.name}${synergyLine}`);
 
@@ -3241,11 +3229,15 @@ class GameScene extends Phaser.Scene {
 
     // 4. 하단 정보창 텍스트 업데이트 (색상 적용)
     const atkSpeedSec = (unit.dataVal.speed / 1000).toFixed(1);
-    const stars = "★".repeat(unit.dataVal.tier);
+    const synergyStacks = unit.synergyStacks || 0;
+    const stars = this._buildStarString(unit.dataVal.tier, synergyStacks);
+    const multiplier = this.getSynergyMultiplier(unit);
+    const boostedDmg = Math.floor(unit.dataVal.dmg * multiplier);
+    const synergyInfo = synergyStacks > 0 ? `   공격력 ${multiplier.toFixed(1)}배` : "";
 
     // 텍스트 내용 설정
     this.statText.setText(
-      `[${stars}${unit.dataVal.name}]   공격력: ${unit.dataVal.dmg}   공속: ${atkSpeedSec}s   사거리: ${unit.dataVal.range}`,
+      `[${stars}${unit.dataVal.name}]   공격력: ${boostedDmg}   공속: ${atkSpeedSec}s   사거리: ${unit.dataVal.range}${synergyInfo}`,
     );
 
     // 텍스트 스타일(색상) 적용
@@ -3727,6 +3719,22 @@ class GameScene extends Phaser.Scene {
     return counts;
   }
 
+  /**
+   * 별 문자열 생성: 6개 별 중 tier개가 기본 ★, 시너지 스택만큼 더 밝은 별
+   * 예: tier=6, stacks=2 → "✦✦★★★★" (✦=시너지 활성 별)
+   */
+  _buildStarString(tier, synergyStacks = 0) {
+    let result = "";
+    for (let i = 0; i < tier; i++) {
+      if (i < synergyStacks) {
+        result += "✦";  // 시너지 활성 별 (밝은)
+      } else {
+        result += "★";
+      }
+    }
+    return result;
+  }
+
   updateSynergyPanel(statuses) {
     if (!this.synergyTexts) return;
 
@@ -3762,29 +3770,69 @@ class GameScene extends Phaser.Scene {
   }
 
   showSynergyTooltip(textObj) {
-    if (!this.synergyTooltip || !textObj?.synergyStatus) return;
+    if (!this.synergyTooltipContainer || !textObj?.synergyStatus) return;
 
     const status = textObj.synergyStatus;
-    const missing = status.missingUnits.map(
-      (key) => UNIT_DATA[key]?.name || key,
-    );
-    const lines = [
-      status.name,
-      `배치: ${status.presentUnits.length}/${status.units.length}`,
-    ];
+    const container = this.synergyTooltipContainer;
+    container.removeAll(true);
 
-    if (missing.length === 0) {
-      lines.push("효과 활성화");
-    } else {
-      lines.push(`필요 유닛: ${missing.join(", ")}`);
+    const posX = textObj.x - 16;
+    const posY = textObj.y;
+    container.setPosition(posX, posY);
+
+    const lineH = 20;
+    let cy = 0;
+
+    // 타이틀
+    const titleText = this.add.text(0, cy, status.name, {
+      fontFamily: "Cafe24ClassicType", fontSize: "14px",
+      color: status.active ? "#ffd166" : "#f8f9fa",
+      stroke: "#000000", strokeThickness: 3,
+    }).setOrigin(1, 0);
+    container.add(titleText);
+    cy += lineH;
+
+    // 배치 현황
+    const countText = this.add.text(0, cy, `배치: ${status.presentUnits.length}/${status.units.length}`, {
+      fontFamily: "Cafe24ClassicType", fontSize: "12px",
+      color: status.active ? "#66bb6a" : "#aaaaaa",
+      stroke: "#000000", strokeThickness: 2,
+    }).setOrigin(1, 0);
+    container.add(countText);
+    cy += lineH;
+
+    // 각 유닛을 색상으로 구분 표시
+    const presentSet = new Set(status.presentUnits);
+    for (const unitKey of status.units) {
+      const unitName = UNIT_DATA[unitKey]?.name || unitKey;
+      const owned = presentSet.has(unitKey);
+      const unitText = this.add.text(0, cy, (owned ? "✔ " : "✘ ") + unitName, {
+        fontFamily: "Cafe24ClassicType", fontSize: "12px",
+        color: owned ? "#66bb6a" : "#ef5350",
+        stroke: "#000000", strokeThickness: 2,
+      }).setOrigin(1, 0);
+      container.add(unitText);
+      cy += lineH - 2;
     }
 
-    this.synergyTooltip
-      .setText(lines.join("\n"))
-      .setPosition(textObj.x - 16, textObj.y)
-      .setOrigin(1, 0)
-      .setVisible(true)
-      .setDepth(10002);
+    if (status.active) {
+      const activeText = this.add.text(0, cy + 2, `공격력 ${SYNERGY_DPS_MULTIPLIER}배 활성!`, {
+        fontFamily: "Cafe24ClassicType", fontSize: "12px",
+        color: "#ffd166", stroke: "#000000", strokeThickness: 2,
+      }).setOrigin(1, 0);
+      container.add(activeText);
+      cy += lineH;
+    }
+
+    // 배경 박스
+    const bounds = container.getBounds();
+    const pad = 8;
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.82);
+    bg.fillRoundedRect(-(bounds.width + pad), -pad, bounds.width + pad * 2, cy + pad * 2, 6);
+    container.addAt(bg, 0);
+
+    container.setVisible(true);
   }
 
   unitAttack(unit) {

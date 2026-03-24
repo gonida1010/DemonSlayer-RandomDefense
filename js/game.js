@@ -2126,6 +2126,43 @@ class GameScene extends Phaser.Scene {
 
     this.synergyTexts = [];
     this.synergyStatuses = [];
+    const synergyPanelX = 1040;
+    const synergyPanelY = 14;
+    const synergyPanelWidth = 220;
+    const synergyPanelHeight = Math.max(64, (SYNERGIES || []).length * 26 + 46);
+
+    this.synergyPanelBg = this.add
+      .rectangle(
+        synergyPanelX + synergyPanelWidth / 2,
+        synergyPanelY + synergyPanelHeight / 2,
+        synergyPanelWidth,
+        synergyPanelHeight,
+        0x030712,
+        0.34,
+      )
+      .setOrigin(0.5)
+      .setDepth(114)
+      .setScrollFactor(0)
+      .setStrokeStyle(1, 0x8b95a7, 0.35);
+
+    this.synergyPanelTitle = this.add
+      .text(
+        synergyPanelX + synergyPanelWidth - 10,
+        synergyPanelY + 8,
+        "SYNERGY",
+        {
+          fontFamily: "Cafe24ClassicType",
+          fontSize: "18px",
+          color: "#f8fafc",
+          stroke: "#000000",
+          strokeThickness: 3,
+        },
+      )
+      .setOrigin(1, 0)
+      .setAlpha(0.72)
+      .setDepth(115)
+      .setScrollFactor(0);
+
     this.synergyTooltip = this.add
       .text(0, 0, "", {
         fontFamily: "Cafe24ClassicType",
@@ -2142,17 +2179,23 @@ class GameScene extends Phaser.Scene {
 
     (SYNERGIES || []).forEach((synergy, idx) => {
       const textObj = this.add
-        .text(1240, 28 + idx * 26, synergy.name, {
-          fontFamily: "Cafe24ClassicType",
-          fontSize: "22px",
-          color: "#d7dde8",
-          stroke: "#101820",
-          strokeThickness: 2,
-          align: "right",
-        })
+        .text(
+          synergyPanelX + synergyPanelWidth - 10,
+          synergyPanelY + 34 + idx * 26,
+          synergy.name,
+          {
+            fontFamily: "Cafe24ClassicType",
+            fontSize: "22px",
+            color: "#d7dde8",
+            stroke: "#101820",
+            strokeThickness: 3,
+            align: "right",
+          },
+        )
         .setOrigin(1, 0)
-        .setAlpha(0.18)
+        .setAlpha(0.34)
         .setDepth(115)
+        .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
 
       textObj.on("pointerover", () => this.showSynergyTooltip(textObj));
@@ -3707,13 +3750,13 @@ class GameScene extends Phaser.Scene {
           : 0;
 
       let color = "#d7dde8";
-      let alpha = 0.18;
+      let alpha = 0.34;
       if (status.active) {
         color = "#ffd166";
         alpha = 0.9;
       } else if (progressRatio > 0) {
         color = progressRatio >= 2 / 3 ? "#7be0ad" : "#8ecae6";
-        alpha = 0.28 + progressRatio * 0.32;
+        alpha = 0.46 + progressRatio * 0.28;
       }
 
       textObj.setText(status.name);

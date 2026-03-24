@@ -832,14 +832,15 @@ class MenuScene extends Phaser.Scene {
 
     // 4. 랭킹 로드
     const text = await fetchLeaderboardText(mode);
-    this.leaderboardText.setText(text);
+    if (this.scene && this.scene.isActive()) {
+      this.leaderboardText.setText(text);
+    }
   }
 
   async startSelectedMode() {
     console.log(`${currentMode} 모드 선택됨`);
 
     if (currentMode === "multi") {
-      // 협동 모드: 서버 매칭 요청
       if (socket && socket.connected) {
         await loadDataForMode("multi");
         socket.emit("join_game", { nickname: currentPlayerName });
@@ -847,11 +848,9 @@ class MenuScene extends Phaser.Scene {
         alert("서버에 연결되어 있지 않습니다!");
       }
     } else if (currentMode === "aibattle") {
-      // AI 대전 모드: 하드 모드 데이터 기반으로 AI와 대결
       await loadDataForMode("hard");
       this.scene.start("GameScene", { isAIBattle: true });
     } else {
-      // 싱글 모드 (스토리/지옥)
       await loadDataForMode(currentMode);
       this.scene.start("GameScene");
     }
@@ -1665,7 +1664,7 @@ class GameScene extends Phaser.Scene {
     this.bg.on("pointerdown", () => {
       this.rangeGraphics.clear();
       this.statText.setText("유닛을 클릭하면 정보가 표시됩니다.");
-      this.recipeText.setVisible(false);
+      if (this.recipeContainer) this.recipeContainer.setVisible(false);
       this.hoverText.setVisible(false);
       this.selectedUnit = null;
       this.btnSell.setVisible(false);
@@ -1701,11 +1700,13 @@ class GameScene extends Phaser.Scene {
 
     this.drawGrid();
     this.createUI();
-    this.updateSynergies();
 
     this.enemies = this.physics.add.group();
     this.units = this.add.group();
     this.bullets = this.physics.add.group();
+
+    // updateSynergies must be called AFTER this.units is created
+    this.updateSynergies();
 
     this.timeEvent = this.time.addEvent({
       delay: 1000,
@@ -4462,7 +4463,7 @@ class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    if (this.isPaused || this.isGameOver) return;
+    if (this.isPaused || this.isGameOver || !this.enemies) return;
 
     // 현재 게임 속도 (기본 1, 2배속 시 2)
     const speedMult = this.time.timeScale;
@@ -5776,6 +5777,10 @@ const config = {
   height: 720,
   parent: "game-container",
   backgroundColor: "#050510",
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   physics: { default: "arcade", arcade: { debug: false } },
   scene: [BootScene, MenuScene, GameScene],
 };

@@ -32,9 +32,6 @@ body {
 #game-container {
   width: 100vw;
   height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: center;
   /* 오버레이가 캔버스 위에 뜨도록 설정 */
   position: relative;
   z-index: 1;

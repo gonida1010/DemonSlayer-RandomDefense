@@ -19,7 +19,8 @@ from game_data import (
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
-    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, OBS_UNIT_COUNT_START,
+    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, ACTION_KITE_TO_BOSS,
+    OBS_UNIT_COUNT_START,
     get_normal_enemy_hp, get_kill_gold, get_boss_hp, get_boss_kill_gold,
     get_required_dps,
     HIDDEN_RECIPE_INDICES, SYNERGIES, SYNERGY_DPS_MULTIPLIER,
@@ -30,7 +31,7 @@ class DemonSlayerEnv(gym.Env):
     """
     귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 (하드 모드, 무한 라운드)
 
-        관측 공간 (74차원):
+        관측 공간 (75차원):
       [0]  round / 200 (무한 모드: 200으로 정규화)
       [1]  gold / 10000
       [2]  time_remaining / 60
@@ -48,9 +49,10 @@ class DemonSlayerEnv(gym.Env):
             [14] high_tier_ratio (T4+) 
             [15] best_valid_combine_tier / 6
             [16] focus_boss (0 or 1)
-            [17..73] 유닛 타입별 보유 수 (그리드+필드) / 10
+            [17] kite_cooldown (0~1, 0=사용가능)
+            [18..74] 유닛 타입별 보유 수 (그리드+필드) / 10
 
-        행동 공간 (174개 이산 행동):
+        행동 공간 (175개 이산 행동):
       0: 대기 (WAIT)
       1: 소환 (SUMMON)
       2~58:  배치 (PLACE unit_type)
@@ -60,6 +62,7 @@ class DemonSlayerEnv(gym.Env):
             171: 최고 티어 조합 실행
             172: 골드 소진까지 소환
             173: 보스 집중 공격 토글 (FOCUS_BOSS)
+            174: 보스 위치로 전체 유닛 재배치 (KITE_TO_BOSS)
     """
 
     metadata = {'render_modes': []}
@@ -101,6 +104,7 @@ class DemonSlayerEnv(gym.Env):
         self.game_over = False
         self.boss_spawned = False
         self.focus_boss = False
+        self.kite_cooldown = 0.0  # 카이팅 재사용 대기 (초)
         self.spawn_acc = 0.0
         self.total_steps = 0
         self._recent_combines = 0
@@ -162,10 +166,12 @@ class DemonSlayerEnv(gym.Env):
                 grid_counts[slot] = grid_counts.get(slot, 0) + 1
 
         owned_counts = self._get_owned_unit_counts()
+        field_full = len(self.field_units) >= GAME_CONFIG.get('maxFieldUnits', 40)
 
         for key, count in grid_counts.items():
             idx = UNIT_KEY_TO_IDX[key]
-            mask[ACTION_PLACE_START + idx] = True   # PLACE
+            if not field_full:
+                mask[ACTION_PLACE_START + idx] = True   # PLACE
             mask[ACTION_SELL_START + idx] = True     # SELL
 
         # COMBINE: 대기실 + 배치 필드 전체 보유 기준으로 판정
@@ -186,6 +192,11 @@ class DemonSlayerEnv(gym.Env):
         is_boss_round = (self.round % GAME_CONFIG['bossInterval'] == 0)
         if is_boss_round and self.field_units:
             mask[ACTION_FOCUS_BOSS] = True
+
+        # KITE_TO_BOSS: 보스가 살아있고 필드 유닛이 있고 쿨다운이 아닐 때
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        if boss_alive and self.field_units and self.kite_cooldown <= 0:
+            mask[ACTION_KITE_TO_BOSS] = True
 
         return mask
 
@@ -211,7 +222,7 @@ class DemonSlayerEnv(gym.Env):
         obs[5] = (boss['hp'] / boss['max_hp']) if boss else 0.0
 
         obs[6] = min(self._field_dps_cache / 500000.0, 1.0)
-        obs[7] = min(len(self.field_units) / 30.0, 1.0)
+        obs[7] = min(len(self.field_units) / 40.0, 1.0)
         obs[8] = sum(1 for s in self.grid if s is None) / 36.0
 
         # 유효 조합 수
@@ -235,6 +246,9 @@ class DemonSlayerEnv(gym.Env):
 
         # 보스 집중 공격 상태
         obs[16] = 1.0 if self.focus_boss else 0.0
+
+        # 카이팅 쿨다운 상태 (0=사용가능, 1=최대쿨)
+        obs[17] = min(self.kite_cooldown / 0.3, 1.0)
 
         # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
@@ -298,6 +312,9 @@ class DemonSlayerEnv(gym.Env):
 
         if action == ACTION_FOCUS_BOSS:
             return self._toggle_focus_boss()
+
+        if action == ACTION_KITE_TO_BOSS:
+            return self._kite_to_boss()
 
         return self.rewards.INVALID_ACTION_PENALTY
 
@@ -408,6 +425,8 @@ class DemonSlayerEnv(gym.Env):
     def _place(self, unit_key):
         if unit_key not in self.grid:
             return self.rewards.INVALID_ACTION_PENALTY
+        if len(self.field_units) >= GAME_CONFIG.get('maxFieldUnits', 40):
+            return self.rewards.INVALID_ACTION_PENALTY
 
         idx = self.grid.index(unit_key)
         self.grid[idx] = None
@@ -415,7 +434,14 @@ class DemonSlayerEnv(gym.Env):
         self._update_field_dps()
 
         tier = UNIT_DATA[unit_key]['tier']
-        return self.rewards.place_reward(tier)
+        reward = self.rewards.place_reward(tier)
+
+        # 적이 있을 때 배치하면 긴급 보너스 (전투 중 빠른 배치 유도)
+        if self.enemies:
+            enemy_ratio = len(self.enemies) / GAME_CONFIG['maxEnemies']
+            reward += 0.3 * tier * (0.5 + enemy_ratio)
+
+        return reward
 
     def _sell(self, unit_key):
         if unit_key not in self.grid:
@@ -515,6 +541,31 @@ class DemonSlayerEnv(gym.Env):
             return self.rewards.FOCUS_BOSS_REWARD
         return 0.0
 
+    def _kite_to_boss(self):
+        """보스 위치로 필드 유닛 1개 재배치 (카이팅).
+        DPS 높은 유닛부터 1개씩 이동 → 에이전트가 반복 호출.
+        쿨다운 0.3초.
+        """
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        if not boss_alive or not self.field_units:
+            return self.rewards.INVALID_ACTION_PENALTY
+        if self.kite_cooldown > 0:
+            return self.rewards.INVALID_ACTION_PENALTY
+
+        self.kite_cooldown = 0.3  # 0.3초 쿨다운 (1개씩 빠르게)
+
+        # focus_boss 자동 활성화
+        if not self.focus_boss:
+            self.focus_boss = True
+
+        reward = 0.0
+        if hasattr(self.rewards, 'KITE_REWARD'):
+            reward += self.rewards.KITE_REWARD
+        else:
+            reward += 0.8
+
+        return reward
+
     def _get_best_valid_combine_recipe_idx(self):
         owned_counts = self._get_owned_unit_counts()
 
@@ -590,6 +641,10 @@ class DemonSlayerEnv(gym.Env):
         reward = 0.0
         is_boss_round = (self.round % GAME_CONFIG['bossInterval'] == 0)
 
+        # --- 쿨다운 감소 ---
+        if self.kite_cooldown > 0:
+            self.kite_cooldown = max(0.0, self.kite_cooldown - dt)
+
         # --- 1. 적 스폰 ---
         if is_boss_round:
             if not self.boss_spawned:
@@ -598,6 +653,7 @@ class DemonSlayerEnv(gym.Env):
                 self._prev_boss_hp_ratio = 1.0
         else:
             self.focus_boss = False  # 비보스 라운드에서는 자동 해제
+            self.kite_cooldown = 0.0  # 비보스 라운드에서는 쿨다운 초기화
             if self.time_remaining > 5:
                 self.spawn_acc += dt
                 interval = GAME_CONFIG['spawnInterval']
@@ -633,7 +689,11 @@ class DemonSlayerEnv(gym.Env):
         if hasattr(self.rewards, 'grid_idle_penalty'):
             grid_tiers = [UNIT_DATA[s]['tier'] for s in self.grid if s is not None]
             if grid_tiers:
-                reward += self.rewards.grid_idle_penalty(grid_tiers, dt)
+                penalty = self.rewards.grid_idle_penalty(grid_tiers, dt)
+                # 적이 있을 때 그리드에 유닛 방치하면 패널티 2배
+                if self.enemies:
+                    penalty *= 2.0
+                reward += penalty
 
         # --- 4. 시간 경과 ---
         self.time_remaining -= dt
@@ -743,22 +803,22 @@ class DemonSlayerEnv(gym.Env):
 
         보스는 단일 대상으로 궤도를 순회하므로,
         사거리가 짧은 유닛은 보스를 때리는 시간이 적음.
-        일반 적은 다수라 항상 누군가 사거리 안 → 100%.
+        JS에서 궤도 근처에 배치하므로 페널티 경감.
 
-        efficiency = 0.5 + 0.5 * min(1.0, range / 200)
-          T1(80): 70%  T2(100): 75%  T3(120): 80%
-          T4(150): 87%  T5(180): 95%  T6(230): 100%
+        efficiency = 0.65 + 0.35 * min(1.0, range / 200)
+          T1(80): 79%  T2(100): 83%  T3(120): 86%
+          T4(150): 91%  T5(180): 97%  T6(230): 100%
         """
-        return 0.5 + 0.5 * min(1.0, unit_range / 200.0)
+        return 0.65 + 0.35 * min(1.0, unit_range / 200.0)
 
     @staticmethod
     def _range_efficiency_focus(unit_range):
         """보스 집중 모드 사거리 효율. 유닛이 보스를 우선 타겟하므로
-        사거리 페널티가 경감됨 (0.75 + 0.25 * min(1.0, range/200)).
-          T1(80): 85%  T2(100): 88%  T3(120): 90%
-          T4(150): 94%  T5(180): 97%  T6(230): 100%
+        사거리 페널티가 경감됨 (0.80 + 0.20 * min(1.0, range/200)).
+          T1(80): 88%  T2(100): 90%  T3(120): 92%
+          T4(150): 95%  T5(180): 98%  T6(230): 100%
         """
-        return 0.75 + 0.25 * min(1.0, unit_range / 200.0)
+        return 0.80 + 0.20 * min(1.0, unit_range / 200.0)
 
     def _update_field_dps(self):
         """필드 유닛 DPS 캐시 갱신 (일반 + 보스용 + 보스집중용 분리, 시너지 적용)"""

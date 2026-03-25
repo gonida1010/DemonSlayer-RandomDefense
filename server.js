@@ -26,14 +26,16 @@ app.get("/api/models", (req, res) => {
   }
 
   // 알고리즘별 폴더 탐색 (ppo, recurrent, dqn)
-  const algoDirs = fs.readdirSync(modelsDir, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name);
+  const algoDirs = fs
+    .readdirSync(modelsDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
 
   for (const algo of algoDirs) {
     const algoPath = path.join(modelsDir, algo);
-    const files = fs.readdirSync(algoPath)
-      .filter(f => f.endsWith(".zip"))
+    const files = fs
+      .readdirSync(algoPath)
+      .filter((f) => f.endsWith(".zip"))
       .sort();
 
     for (const file of files) {
@@ -50,7 +52,11 @@ app.get("/api/models", (req, res) => {
         modified: stat.mtime.toISOString(),
         isBest,
         isFinal,
-        label: isBest ? `[BEST] ${algo}` : isFinal ? `[FINAL] ${algo}` : `${algo}/${file}`,
+        label: isBest
+          ? `[BEST] ${algo}`
+          : isFinal
+            ? `[FINAL] ${algo}`
+            : `${algo}/${file}`,
       });
     }
   }
@@ -202,6 +208,7 @@ io.on("connection", (socket) => {
       rlSocket.emit("ai_battle_start", data);
     } else {
       console.log("  RL 클라이언트 미연결 → 브라우저 로컬 시뮬레이션 사용");
+      socket.emit("ai_battle_no_bridge");
     }
   });
 

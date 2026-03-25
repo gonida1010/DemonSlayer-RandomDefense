@@ -106,6 +106,9 @@ HIDDEN_COMBINE_MULTIPLIER = 1.5
 # 보스 집중 공격 (LSTM이 보스전 타이밍에 집중 패턴 학습)
 FOCUS_BOSS_REWARD = 0.6
 
+# 보스 카이팅 (LSTM: 장기 보스전 전략 학습)
+KITE_REWARD = 1.2
+
 
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소 진행 보상 (LSTM: 장기 보스전 진행 추적)"""

@@ -23,13 +23,13 @@ config.py - 강화학습 설정 파일 (하드 모드 + 다중 알고리즘)
 # =============================================================
 # 1. 공통 설정
 # =============================================================
-TOTAL_TIMESTEPS = 100_000_000      # 총 학습 타임스텝
-N_ENVS = 6                        # 병렬 환경 수 (CPU 코어에 맞게 조정)
-EVAL_EPISODES = 100                # 평가 에피소드 수
-DEVICE = "auto"                   # "auto", "cuda", "cpu"
-PROGRESS_BAR = True               # tqdm 진행률 바
-PRINT_INTERVAL = 30000            # 커스텀 콘솔 출력 간격 (episode 기준)
-LOG_INTERVAL = 10                # SB3 표 로그 출력 간격 (iteration 기준)
+TOTAL_TIMESTEPS = 100_000_000       # 총 학습 타임스텝
+N_ENVS = 6                          # 병렬 환경 수 (CPU 코어에 맞게 조정)
+EVAL_EPISODES = 100                 # 평가 에피소드 수
+DEVICE = "auto"                     # "auto", "cuda", "cpu"
+PROGRESS_BAR = True                 # tqdm 진행률 바
+PRINT_INTERVAL = 30000              # 커스텀 콘솔 출력 간격 (episode 기준)
+LOG_INTERVAL = 10                   # SB3 표 로그 출력 간격 (iteration 기준)
 
 # =============================================================
 # 2. 저장 / 로깅 경로 (알고리즘별 분리)

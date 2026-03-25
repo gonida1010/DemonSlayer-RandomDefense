@@ -113,6 +113,9 @@ HIDDEN_COMBINE_MULTIPLIER = 1.5
 # 보스 집중 공격
 FOCUS_BOSS_REWARD = 0.5
 
+# 보스 카이팅 (전체 유닛 보스 위치로 재배치)
+KITE_REWARD = 1.0
+
 
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소에 따른 중간 보상.

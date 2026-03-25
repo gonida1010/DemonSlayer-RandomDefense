@@ -9,6 +9,7 @@ data.hard.js에서 추출한 지옥 모드(Hard) 데이터 - 무한 라운드
 GAME_CONFIG = {
     'initialGold': 1200,
     'maxEnemies': 60,
+    'maxFieldUnits': 40,         # 필드 배치 최대 유닛 수
     'roundTime': 60,
     'spawnInterval': 1.0,        # 하드: 1.0초 (노멀: 1.2초)
     'unitSummonCost': 150,
@@ -223,9 +224,10 @@ def get_boss_hp(round_num):
 # 171: COMBINE_BEST_TIER
 # 172: SUMMON_UNTIL_FULL
 # 173: FOCUS_BOSS (보스 집중 공격 토글)
-OBS_STRATEGY_DIM = 7
+# 174: KITE_TO_BOSS (보스 위치로 전체 유닛 재배치)
+OBS_STRATEGY_DIM = 8
 OBS_UNIT_COUNT_START = 10 + OBS_STRATEGY_DIM
-OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 74
+OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 75
 
 # =====================================================================
 # 시너지 (Synergy) - T6 유닛 조합 보너스
@@ -271,7 +273,8 @@ ACTION_MACRO_PLACE_BEST = ACTION_COMBINE_END + 1             # 170
 ACTION_MACRO_COMBINE_BEST = ACTION_MACRO_PLACE_BEST + 1      # 171
 ACTION_MACRO_SUMMON_ALL = ACTION_MACRO_COMBINE_BEST + 1      # 172
 ACTION_FOCUS_BOSS = ACTION_MACRO_SUMMON_ALL + 1              # 173
-NUM_ACTIONS = ACTION_FOCUS_BOSS + 1                          # 174
+ACTION_KITE_TO_BOSS = ACTION_FOCUS_BOSS + 1                  # 174
+NUM_ACTIONS = ACTION_KITE_TO_BOSS + 1                        # 175
 
 # 소환 확률 (JS 코드와 동일)
 SUMMON_PROBS = {1: 0.70, 2: 0.20, 3: 0.10}

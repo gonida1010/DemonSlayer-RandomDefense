@@ -87,6 +87,9 @@ HIDDEN_COMBINE_MULTIPLIER = 1.5
 # 보스 집중 공격 (DQN: 즉시 보상으로 집중 유도)
 FOCUS_BOSS_REWARD = 0.4
 
+# 보스 카이팅 (DQN: 즉시 보상으로 카이팅 유도)
+KITE_REWARD = 0.8
+
 
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소 진행 보상 (DQN: 밀집 보상으로 단계적 학습)"""

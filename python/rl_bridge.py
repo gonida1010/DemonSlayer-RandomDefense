@@ -5,7 +5,7 @@ rl_bridge.py - 학습된 RL 모델로 실제 게임 제어 + AI 대전
 AI 대전 모드에서는 내부 game_env를 사용해 병렬 게임을 시뮬레이션합니다.
 
 사용법 (일반 RL 모드):
-    1. cd /d c:\Pyg\DemonSlayer_RandomDefense\MyDefenseGame
+    1. cd /d c:\\Pyg\\DemonSlayer_RandomDefense\\MyDefenseGame
     2. npm start
     3. http://localhost:3000/?rl=true 접속
     4. python rl_bridge.py --model models/ppo/best_model.zip
@@ -37,7 +37,8 @@ from game_data import (
     ACTION_WAIT, ACTION_SUMMON,
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
-    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, OBS_UNIT_COUNT_START,
+    ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, ACTION_KITE_TO_BOSS,
+    OBS_UNIT_COUNT_START,
     get_required_dps, SYNERGIES,
 )
 
@@ -177,7 +178,7 @@ class RLBridge:
 
         obs[6] = min(state.get('totalFieldDps', 0) / 500000.0, 1.0)
         field_units = state.get('fieldUnits', [])
-        obs[7] = min(len(field_units) / 30.0, 1.0)
+        obs[7] = min(len(field_units) / 40.0, 1.0)
 
         grid_state = state.get('gridState', [])
         empty_count = sum(1 for s in grid_state if s is None)
@@ -224,6 +225,9 @@ class RLBridge:
         # 보스 집중 공격 상태
         obs[16] = 1.0 if state.get('focusBoss', False) else 0.0
 
+        # 카이팅 쿨다운 상태
+        obs[17] = min(state.get('kiteCooldown', 0) / 0.3, 1.0)
+
         for i in range(NUM_UNIT_TYPES):
             obs[OBS_UNIT_COUNT_START + i] = min(counts[i] / 10.0, 1.0)
 
@@ -243,11 +247,13 @@ class RLBridge:
             mask[ACTION_SUMMON] = True
 
         owned_counts = _get_owned_unit_counts(grid_state, field_units)
+        field_full = len(field_units) >= GAME_CONFIG.get('maxFieldUnits', 40)
 
         for key in {slot['key'] for slot in grid_state if slot and 'key' in slot}:
             idx = UNIT_KEY_TO_IDX.get(key)
             if idx is not None:
-                mask[ACTION_PLACE_START + idx] = True
+                if not field_full:
+                    mask[ACTION_PLACE_START + idx] = True
                 mask[ACTION_SELL_START + idx] = True
 
         for i, recipe in enumerate(RECIPES):
@@ -269,6 +275,10 @@ class RLBridge:
         field_units = state.get('fieldUnits', [])
         if boss_alive and len(field_units) > 0:
             mask[ACTION_FOCUS_BOSS] = True
+
+        # KITE_TO_BOSS: 보스가 살아있고 필드 유닛이 있고 쿨다운이 끝났을 때
+        if boss_alive and len(field_units) > 0 and state.get('kiteCooldown', 0) <= 0:
+            mask[ACTION_KITE_TO_BOSS] = True
 
         return mask
 
@@ -295,6 +305,8 @@ class RLBridge:
             return {'type': 'summon_all', 'params': {}}
         if action == ACTION_FOCUS_BOSS:
             return {'type': 'focus_boss', 'params': {}}
+        if action == ACTION_KITE_TO_BOSS:
+            return {'type': 'kite_to_boss', 'params': {}}
         return {'type': 'wait', 'params': {}}
 
     def predict_action(self, obs, mask):

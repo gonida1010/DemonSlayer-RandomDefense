@@ -873,6 +873,7 @@ class GameScene extends Phaser.Scene {
 
     this.bossSpawned = false;
     this.focusBoss = false;
+    this.kiteCooldown = 0; // 카이팅 쿨다운 (ms)
 
     this.gridSize = 6;
     this.cellSize = 60;
@@ -1694,6 +1695,7 @@ class GameScene extends Phaser.Scene {
 
     this.mapCenter = { x: 900, y: 360 };
     this.mapRadius = 300;
+    this.maxFieldUnits = 40; // 필드 배치 최대 유닛 수
     this.add
       .circle(this.mapCenter.x, this.mapCenter.y, this.mapRadius)
       .setStrokeStyle(4, 0x444444);
@@ -2153,7 +2155,10 @@ class GameScene extends Phaser.Scene {
       .setDepth(115)
       .setScrollFactor(0);
 
-    this.synergyTooltipContainer = this.add.container(0, 0).setVisible(false).setDepth(10002);
+    this.synergyTooltipContainer = this.add
+      .container(0, 0)
+      .setVisible(false)
+      .setDepth(10002);
 
     (SYNERGIES || []).forEach((synergy, idx) => {
       const textObj = this.add
@@ -2177,7 +2182,9 @@ class GameScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
 
       textObj.on("pointerover", () => this.showSynergyTooltip(textObj));
-      textObj.on("pointerout", () => this.synergyTooltipContainer.setVisible(false));
+      textObj.on("pointerout", () =>
+        this.synergyTooltipContainer.setVisible(false),
+      );
       this.synergyTexts.push(textObj);
     });
 
@@ -2685,6 +2692,8 @@ class GameScene extends Phaser.Scene {
     this.currentTime = GAME_CONFIG.roundTime;
     this.bossSpawned = false;
     this.focusBoss = false; // 라운드 전환 시 보스 집중 해제
+    this.kiteCooldown = 0; // 카이팅 쿨다운 초기화
+    this._kiteMovedSet = null; // 카이팅 이동 추적 리셋
     this.spawnTimer.paused = false;
 
     this.txtRound.setText(`ROUND: ${this.round}`);
@@ -3233,7 +3242,8 @@ class GameScene extends Phaser.Scene {
     const stars = this._buildStarString(unit.dataVal.tier, synergyStacks);
     const multiplier = this.getSynergyMultiplier(unit);
     const boostedDmg = Math.floor(unit.dataVal.dmg * multiplier);
-    const synergyInfo = synergyStacks > 0 ? `   공격력 ${multiplier.toFixed(1)}배` : "";
+    const synergyInfo =
+      synergyStacks > 0 ? `   공격력 ${multiplier.toFixed(1)}배` : "";
 
     // 텍스트 내용 설정
     this.statText.setText(
@@ -3395,6 +3405,23 @@ class GameScene extends Phaser.Scene {
         } else {
           this.returnUnitToOriginalPos(unit);
           this.showWarningText(unit.x, unit.y, "겹침 불가!");
+          return;
+        }
+      }
+
+      // 필드 유닛 수 제한 체크 (그리드→필드 이동 시에만)
+      if (unit.gridX !== -1) {
+        let fieldCount = 0;
+        this.units.children.iterate((u) => {
+          if (u && u.active && u.gridX === -1) fieldCount++;
+        });
+        if (fieldCount >= this.maxFieldUnits) {
+          this.returnUnitToOriginalPos(unit);
+          this.showWarningText(
+            unit.x,
+            unit.y,
+            `최대 ${this.maxFieldUnits}마리!`,
+          );
           return;
         }
       }
@@ -3727,7 +3754,7 @@ class GameScene extends Phaser.Scene {
     let result = "";
     for (let i = 0; i < tier; i++) {
       if (i < synergyStacks) {
-        result += "✦";  // 시너지 활성 별 (밝은)
+        result += "✦"; // 시너지 활성 별 (밝은)
       } else {
         result += "★";
       }
@@ -3784,20 +3811,33 @@ class GameScene extends Phaser.Scene {
     let cy = 0;
 
     // 타이틀
-    const titleText = this.add.text(0, cy, status.name, {
-      fontFamily: "Cafe24ClassicType", fontSize: "14px",
-      color: status.active ? "#ffd166" : "#f8f9fa",
-      stroke: "#000000", strokeThickness: 3,
-    }).setOrigin(1, 0);
+    const titleText = this.add
+      .text(0, cy, status.name, {
+        fontFamily: "Cafe24ClassicType",
+        fontSize: "14px",
+        color: status.active ? "#ffd166" : "#f8f9fa",
+        stroke: "#000000",
+        strokeThickness: 3,
+      })
+      .setOrigin(1, 0);
     container.add(titleText);
     cy += lineH;
 
     // 배치 현황
-    const countText = this.add.text(0, cy, `배치: ${status.presentUnits.length}/${status.units.length}`, {
-      fontFamily: "Cafe24ClassicType", fontSize: "12px",
-      color: status.active ? "#66bb6a" : "#aaaaaa",
-      stroke: "#000000", strokeThickness: 2,
-    }).setOrigin(1, 0);
+    const countText = this.add
+      .text(
+        0,
+        cy,
+        `배치: ${status.presentUnits.length}/${status.units.length}`,
+        {
+          fontFamily: "Cafe24ClassicType",
+          fontSize: "12px",
+          color: status.active ? "#66bb6a" : "#aaaaaa",
+          stroke: "#000000",
+          strokeThickness: 2,
+        },
+      )
+      .setOrigin(1, 0);
     container.add(countText);
     cy += lineH;
 
@@ -3806,20 +3846,29 @@ class GameScene extends Phaser.Scene {
     for (const unitKey of status.units) {
       const unitName = UNIT_DATA[unitKey]?.name || unitKey;
       const owned = presentSet.has(unitKey);
-      const unitText = this.add.text(0, cy, (owned ? "✔ " : "✘ ") + unitName, {
-        fontFamily: "Cafe24ClassicType", fontSize: "12px",
-        color: owned ? "#66bb6a" : "#ef5350",
-        stroke: "#000000", strokeThickness: 2,
-      }).setOrigin(1, 0);
+      const unitText = this.add
+        .text(0, cy, (owned ? "✔ " : "✘ ") + unitName, {
+          fontFamily: "Cafe24ClassicType",
+          fontSize: "12px",
+          color: owned ? "#66bb6a" : "#ef5350",
+          stroke: "#000000",
+          strokeThickness: 2,
+        })
+        .setOrigin(1, 0);
       container.add(unitText);
       cy += lineH - 2;
     }
 
     if (status.active) {
-      const activeText = this.add.text(0, cy + 2, `공격력 ${SYNERGY_DPS_MULTIPLIER}배 활성!`, {
-        fontFamily: "Cafe24ClassicType", fontSize: "12px",
-        color: "#ffd166", stroke: "#000000", strokeThickness: 2,
-      }).setOrigin(1, 0);
+      const activeText = this.add
+        .text(0, cy + 2, `공격력 ${SYNERGY_DPS_MULTIPLIER}배 활성!`, {
+          fontFamily: "Cafe24ClassicType",
+          fontSize: "12px",
+          color: "#ffd166",
+          stroke: "#000000",
+          strokeThickness: 2,
+        })
+        .setOrigin(1, 0);
       container.add(activeText);
       cy += lineH;
     }
@@ -3829,7 +3878,13 @@ class GameScene extends Phaser.Scene {
     const pad = 8;
     const bg = this.add.graphics();
     bg.fillStyle(0x000000, 0.82);
-    bg.fillRoundedRect(-(bounds.width + pad), -pad, bounds.width + pad * 2, cy + pad * 2, 6);
+    bg.fillRoundedRect(
+      -(bounds.width + pad),
+      -pad,
+      bounds.width + pad * 2,
+      cy + pad * 2,
+      6,
+    );
     container.addAt(bg, 0);
 
     container.setVisible(true);
@@ -4909,37 +4964,109 @@ class GameScene extends Phaser.Scene {
   // =================================================================
 
   _initAIBattle() {
-    // AI 상태 패널 생성 (화면 오른쪽 상단)
-    const panelX = 1100,
-      panelY = 10;
-    this.aiBattlePanel = this.add.container(panelX, panelY).setDepth(8000);
+    // --- DOM 기반 반응형 가로 레이아웃 ---
+    // 기존 game-container를 래퍼로 감싸고 오른쪽에 AI 패널 추가
+    const gameContainer = document.getElementById("game-container");
+    let wrapper = document.getElementById("ai-battle-wrapper");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.id = "ai-battle-wrapper";
+      wrapper.style.cssText =
+        "display:flex;flex-direction:row;align-items:stretch;" +
+        "justify-content:center;width:100vw;height:100vh;" +
+        "background:#050510;overflow:hidden;";
+      gameContainer.parentNode.insertBefore(wrapper, gameContainer);
 
-    const bg = this.add
-      .rectangle(0, 55, 180, 130, 0x000000, 0.75)
-      .setOrigin(0, 0)
-      .setStrokeStyle(2, 0x9b59b6);
-    this.aiBattlePanel.add(bg);
+      // 왼쪽: 플레이어 게임
+      const leftPanel = document.createElement("div");
+      leftPanel.id = "ai-battle-left";
+      leftPanel.style.cssText =
+        "flex:3;display:flex;align-items:center;justify-content:center;" +
+        "position:relative;min-width:0;";
+      wrapper.appendChild(leftPanel);
+      leftPanel.appendChild(gameContainer);
 
-    const titleText = this.add
-      .text(90, 60, "🤖 AI 에이전트", {
-        fontFamily: "Cafe24ClassicType",
-        fontSize: "16px",
-        color: "#9b59b6",
-        align: "center",
-      })
-      .setOrigin(0.5);
-    this.aiBattlePanel.add(titleText);
+      // 오른쪽: AI 에이전트
+      const rightPanel = document.createElement("div");
+      rightPanel.id = "ai-battle-right";
+      rightPanel.style.cssText =
+        "flex:1;min-width:260px;max-width:360px;display:flex;" +
+        "flex-direction:column;padding:20px;box-sizing:border-box;" +
+        "background:linear-gradient(180deg,#0a0a1a 0%,#1a0a2e 100%);" +
+        "border-left:3px solid #9b59b6;color:#fff;" +
+        "font-family:'Cafe24ClassicType',sans-serif;overflow-y:auto;";
+      wrapper.appendChild(rightPanel);
 
-    this.aiStatusText = this.add
-      .text(90, 90, "시뮬레이션 준비 중...", {
-        fontFamily: "Cafe24ClassicType",
-        fontSize: "13px",
-        color: "#ffffff",
-        align: "center",
-        lineSpacing: 4,
-      })
-      .setOrigin(0.5, 0);
-    this.aiBattlePanel.add(this.aiStatusText);
+      rightPanel.innerHTML = `
+        <div style="text-align:center;margin-bottom:16px;">
+          <div style="font-size:22px;color:#9b59b6;margin-bottom:4px;">🤖 AI 에이전트</div>
+          <div id="ai-panel-status" style="font-size:14px;color:#aaa;">시뮬레이션 준비 중...</div>
+        </div>
+        <div style="background:rgba(155,89,182,0.15);border-radius:10px;padding:16px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <span style="color:#bbb;">라운드</span>
+            <span id="ai-panel-round" style="color:#f1c40f;font-size:18px;">-</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <span style="color:#bbb;">DPS</span>
+            <span id="ai-panel-dps" style="color:#e74c3c;font-size:18px;">-</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <span style="color:#bbb;">유닛 수</span>
+            <span id="ai-panel-units" style="color:#3498db;font-size:18px;">-</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span style="color:#bbb;">골드</span>
+            <span id="ai-panel-gold" style="color:#f39c12;font-size:18px;">-</span>
+          </div>
+        </div>
+        <div id="ai-panel-result" style="text-align:center;font-size:16px;color:#e74c3c;display:none;
+          background:rgba(0,0,0,0.4);border-radius:8px;padding:12px;margin-bottom:12px;"></div>
+        <div style="flex:1;"></div>
+        <div style="text-align:center;font-size:12px;color:#666;margin-top:auto;">
+          ※ AI는 하드 모드 시뮬레이션으로 진행됩니다
+        </div>
+      `;
+    }
+
+    // Phaser 캔버스 스케일 조정 (AI 모드에서는 왼쪽에 맞춤)
+    const canvas = gameContainer.querySelector("canvas");
+    if (canvas) {
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      canvas.style.objectFit = "contain";
+    }
+
+    // DOM 업데이트 함수 저장
+    this._updateAIPanel = (data) => {
+      const el = (id) => document.getElementById(id);
+      if (el("ai-panel-round"))
+        el("ai-panel-round").textContent = `R${data.round}`;
+      if (el("ai-panel-dps"))
+        el("ai-panel-dps").textContent = (data.fieldDps || 0).toLocaleString();
+      if (el("ai-panel-units"))
+        el("ai-panel-units").textContent = data.fieldUnits || 0;
+      if (el("ai-panel-gold")) el("ai-panel-gold").textContent = data.gold || 0;
+      if (el("ai-panel-status")) {
+        el("ai-panel-status").textContent = data.isGameOver
+          ? "게임 종료"
+          : "진행 중...";
+        el("ai-panel-status").style.color = data.isGameOver
+          ? "#e74c3c"
+          : "#2ecc71";
+      }
+    };
+
+    this._showAIPanelResult = (data) => {
+      const resultEl = document.getElementById("ai-panel-result");
+      if (resultEl) {
+        resultEl.style.display = "block";
+        resultEl.innerHTML = `게임 오버!<br>최종: R${data.finalRound}<br>DPS: ${(data.fieldDps || 0).toLocaleString()}`;
+      }
+    };
+
+    // Phaser 내 소형 오버레이는 생성하지 않음 (DOM 패널 사용)
+    this.aiStatusText = null;
 
     // AI 시뮬레이션 시작 (서버 연결 시도 → 실패 시 JS 휴리스틱)
     this._startAISimulation();
@@ -4952,25 +5079,27 @@ class GameScene extends Phaser.Scene {
 
       socket.off("ai_battle_state");
       socket.off("ai_battle_result");
+      socket.off("ai_battle_no_bridge");
+
+      // RL 브릿지 미연결 시 로컬 휴리스틱으로 폴백
+      socket.on("ai_battle_no_bridge", () => {
+        console.log("RL 브릿지 미연결 → 로컬 AI 시뮬레이션 사용");
+        const statusEl = document.getElementById("ai-panel-status");
+        if (statusEl) {
+          statusEl.textContent = "로컬 AI 시뮬레이션...";
+          statusEl.style.color = "#f39c12";
+        }
+        this._runLocalAISimulation();
+      });
 
       socket.on("ai_battle_state", (data) => {
         this.aiBattleState = data;
-        if (this.aiStatusText && this.aiStatusText.active) {
-          this.aiStatusText.setText(
-            `R${data.round}  DPS: ${(data.fieldDps || 0).toLocaleString()}\n` +
-              `유닛: ${data.fieldUnits || 0}  골드: ${data.gold || 0}`,
-          );
-        }
+        if (this._updateAIPanel) this._updateAIPanel(data);
       });
 
       socket.on("ai_battle_result", (data) => {
         this.aiBattleResult = data;
-        if (this.aiStatusText && this.aiStatusText.active) {
-          this.aiStatusText.setText(
-            `게임 오버!\n최종: R${data.finalRound}\n` +
-              `DPS: ${(data.fieldDps || 0).toLocaleString()}`,
-          );
-        }
+        if (this._showAIPanelResult) this._showAIPanelResult(data);
       });
     } else {
       // 서버 없이 JS 휴리스틱 AI 시뮬레이션
@@ -5074,8 +5203,8 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // 배치 (그리드 → 필드): 높은 티어 우선
-      while (ai.grid.length > 0 && ai.field.length < 30) {
+      // 배치 (그리드 → 필드): 높은 티어 우선 (최대 40)
+      while (ai.grid.length > 0 && ai.field.length < 40) {
         // 가장 높은 티어 유닛 찾기
         let bestIdx = 0,
           bestTier = 0;
@@ -5161,18 +5290,14 @@ class GameScene extends Phaser.Scene {
         isGameOver: ai.isGameOver,
       };
 
-      if (this.aiStatusText && this.aiStatusText.active) {
-        if (ai.isGameOver) {
-          this.aiStatusText.setText(
-            `게임 오버!\n최종: R${ai.round}\n` +
-              `DPS: ${ai.fieldDps.toLocaleString()}`,
-          );
-          this.aiBattleResult = { finalRound: ai.round, fieldDps: ai.fieldDps };
-        } else {
-          this.aiStatusText.setText(
-            `R${ai.round}  DPS: ${ai.fieldDps.toLocaleString()}\n` +
-              `유닛: ${ai.field.length}  골드: ${ai.gold}`,
-          );
+      if (this._updateAIPanel) {
+        this._updateAIPanel(this.aiBattleState);
+      }
+
+      if (ai.isGameOver) {
+        this.aiBattleResult = { finalRound: ai.round, fieldDps: ai.fieldDps };
+        if (this._showAIPanelResult) {
+          this._showAIPanelResult(this.aiBattleResult);
         }
       }
     };
@@ -5202,16 +5327,22 @@ class GameScene extends Phaser.Scene {
         : false;
 
     let resultText;
+    let resultColor;
     if (!aiDone) {
       resultText = `당신: R${myRound}  |  AI: R${aiRound} (진행 중)`;
+      resultColor = "#f1c40f";
     } else if (myRound > aiRound) {
       resultText = `🏆 승리! 당신: R${myRound}  vs  AI: R${aiRound}`;
+      resultColor = "#2ecc71";
     } else if (myRound < aiRound) {
       resultText = `💀 패배... 당신: R${myRound}  vs  AI: R${aiRound}`;
+      resultColor = "#e74c3c";
     } else {
       resultText = `🤝 무승부! 당신: R${myRound}  vs  AI: R${aiRound}`;
+      resultColor = "#f1c40f";
     }
 
+    // Phaser 게임 내 결과 텍스트
     this.add
       .text(640, 400, resultText, {
         fontFamily: "Cafe24ClassicType",
@@ -5223,6 +5354,15 @@ class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(9001);
+
+    // DOM 패널에도 최종 결과 표시
+    const resultEl = document.getElementById("ai-panel-result");
+    if (resultEl) {
+      resultEl.style.display = "block";
+      resultEl.style.color = resultColor;
+      resultEl.style.fontSize = "18px";
+      resultEl.innerHTML = resultText;
+    }
   }
 
   // =================================================================
@@ -5294,6 +5434,7 @@ class GameScene extends Phaser.Scene {
       totalFieldDps: totalFieldDps,
       validCombines: validCombines,
       focusBoss: this.focusBoss,
+      kiteCooldown: Math.max(0, (this.kiteCooldown - Date.now()) / 1000), // 남은 초
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
     };
@@ -5374,6 +5515,12 @@ class GameScene extends Phaser.Scene {
         break;
       }
 
+      case "kite_to_boss": {
+        const moved = this._rlKiteToBoss();
+        actionDesc = moved > 0 ? `KITE ${moved} units` : "KITE MISS";
+        break;
+      }
+
       case "wait":
       default:
         actionDesc = "WAIT";
@@ -5388,6 +5535,13 @@ class GameScene extends Phaser.Scene {
   }
 
   _rlPlaceUnitByKey(unitKey) {
+    // 필드 유닛 수 제한 체크
+    let fieldCount = 0;
+    this.units.children.iterate((u) => {
+      if (u && u.active && u.gridX === -1) fieldCount++;
+    });
+    if (fieldCount >= this.maxFieldUnits) return false;
+
     for (let y = 0; y < this.gridSize; y++) {
       for (let x = 0; x < this.gridSize; x++) {
         const cell = this.gridState[y][x];
@@ -5396,25 +5550,220 @@ class GameScene extends Phaser.Scene {
         this.gridState[y][x] = null;
 
         const unitRange = cell.dataVal.range || 100;
-        const orbitR = this.mapRadius - 20;
-        const optimalR = Math.max(40, orbitR - unitRange * 0.7);
-        const jitter = (Math.random() - 0.5) * 30;
-        const placeDist = Math.max(
-          40,
-          Math.min(optimalR + jitter, orbitR - 40),
-        );
-        const angle = Math.random() * Math.PI * 2;
-        const fx = this.mapCenter.x + Math.cos(angle) * placeDist;
-        const fy = this.mapCenter.y + Math.sin(angle) * placeDist;
+        const orbitR = this.mapRadius - 20; // 적 궤도 반경 (280)
+
+        // --- 최적 반경: 사거리 끝이 궤도에 닿도록 배치 ---
+        // 유닛이 궤도에서 (orbitR - unitRange * 0.8) 거리에 있으면
+        // 사거리의 80%가 궤도를 커버함
+        const idealR = Math.max(60, orbitR - unitRange * 0.8);
+        const jitter = (Math.random() - 0.5) * 20;
+        const placeDist = Phaser.Math.Clamp(idealR + jitter, 60, orbitR - 30);
+
+        // --- 최적 각도: 적이 밀집된 방향으로 배치 ---
+        let angle;
+        const activeEnemies = [];
+        this.enemies.children.iterate((e) => {
+          if (e && e.active) activeEnemies.push(e);
+        });
+
+        if (activeEnemies.length > 0) {
+          // 적들의 평균 각도 계산 (벡터 합으로 중심 방향 추정)
+          let sumSin = 0;
+          let sumCos = 0;
+          for (const e of activeEnemies) {
+            const ex = e.x - this.mapCenter.x;
+            const ey = e.y - this.mapCenter.y;
+            const eAngle = Math.atan2(ey, ex);
+            sumSin += Math.sin(eAngle);
+            sumCos += Math.cos(eAngle);
+          }
+          const avgAngle = Math.atan2(sumSin, sumCos);
+          // 적 밀집 방향 ± 60도 범위에 배치 (골고루 분산)
+          const spread = (Math.random() - 0.5) * (Math.PI / 1.5);
+          angle = avgAngle + spread;
+        } else {
+          // 적이 없으면 궤도 전체에 고르게 분산
+          const existingAngles = [];
+          this.units.children.iterate((u) => {
+            if (u && u.active && u.gridX === -1) {
+              existingAngles.push(
+                Math.atan2(u.y - this.mapCenter.y, u.x - this.mapCenter.x),
+              );
+            }
+          });
+          if (existingAngles.length > 0) {
+            // 기존 유닛들 사이 가장 큰 빈 구간에 배치
+            existingAngles.sort((a, b) => a - b);
+            let maxGap = 0;
+            let gapMid = Math.random() * Math.PI * 2;
+            for (let i = 0; i < existingAngles.length; i++) {
+              const next =
+                i + 1 < existingAngles.length
+                  ? existingAngles[i + 1]
+                  : existingAngles[0] + Math.PI * 2;
+              const gap = next - existingAngles[i];
+              if (gap > maxGap) {
+                maxGap = gap;
+                gapMid = existingAngles[i] + gap / 2;
+              }
+            }
+            angle = gapMid + (Math.random() - 0.5) * 0.3;
+          } else {
+            angle = Math.random() * Math.PI * 2;
+          }
+        }
+
+        // --- 겹침 방지: 기존 유닛과 40px 이상 떨어진 위치 찾기 ---
+        const MIN_DIST = 40;
+        const MAX_ATTEMPTS = 12;
+        let finalX = this.mapCenter.x + Math.cos(angle) * placeDist;
+        let finalY = this.mapCenter.y + Math.sin(angle) * placeDist;
+
+        const isOverlapping = (px, py) => {
+          let overlap = false;
+          this.units.children.iterate((other) => {
+            if (!other || !other.active || other === cell) return;
+            if (other.gridX !== -1) return; // 그리드 유닛 제외
+            const d = Phaser.Math.Distance.Between(px, py, other.x, other.y);
+            if (d < MIN_DIST) overlap = true;
+          });
+          return overlap;
+        };
+
+        if (isOverlapping(finalX, finalY)) {
+          let placed = false;
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            // 각도를 조금씩 회전하며 빈 자리 탐색
+            const offsetAngle = angle + (attempt * Math.PI * 2) / MAX_ATTEMPTS;
+            const tryX = this.mapCenter.x + Math.cos(offsetAngle) * placeDist;
+            const tryY = this.mapCenter.y + Math.sin(offsetAngle) * placeDist;
+            if (!isOverlapping(tryX, tryY)) {
+              finalX = tryX;
+              finalY = tryY;
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            // 모든 각도에서 겹치면 반경을 줄여서 안쪽에 배치
+            const innerR = Math.max(50, placeDist - 50);
+            const fallbackAngle = Math.random() * Math.PI * 2;
+            finalX = this.mapCenter.x + Math.cos(fallbackAngle) * innerR;
+            finalY = this.mapCenter.y + Math.sin(fallbackAngle) * innerR;
+          }
+        }
 
         cell.gridX = -1;
         cell.gridY = -1;
-        cell.x = fx;
-        cell.y = fy;
+        cell.x = finalX;
+        cell.y = finalY;
         return true;
       }
     }
     return false;
+  }
+
+  _rlKiteToBoss() {
+    // 보스 찾기
+    let boss = null;
+    this.enemies.children.iterate((e) => {
+      if (e && e.active && e.isBoss) boss = e;
+    });
+    if (!boss) return 0;
+
+    // 쿨다운 체크 (0.3초 — 유닛 1개씩 이동하므로 짧은 쿨다운)
+    if (this.kiteCooldown > Date.now()) return 0;
+
+    // 보스 집중 모드 자동 활성화
+    this.focusBoss = true;
+
+    // 보스 위치 기준 각도
+    const bossAngle = Math.atan2(
+      boss.y - this.mapCenter.y,
+      boss.x - this.mapCenter.x,
+    );
+    const orbitR = this.mapRadius - 20;
+
+    // 필드 유닛 수집 + DPS 내림차순 정렬
+    const fieldUnits = [];
+    this.units.children.iterate((u) => {
+      if (u && u.active && u.gridX === -1) fieldUnits.push(u);
+    });
+    if (fieldUnits.length === 0) return 0;
+
+    fieldUnits.sort((a, b) => {
+      const dpsA = (a.dataVal.dmg || 0) * (1000 / (a.dataVal.speed || 1000));
+      const dpsB = (b.dataVal.dmg || 0) * (1000 / (b.dataVal.speed || 1000));
+      return dpsB - dpsA;
+    });
+
+    // 이번 보스 사이클에서 아직 카이팅하지 않은 유닛 찾기
+    if (!this._kiteMovedSet) this._kiteMovedSet = new Set();
+    let target = null;
+    for (const u of fieldUnits) {
+      if (!this._kiteMovedSet.has(u)) {
+        target = u;
+        break;
+      }
+    }
+
+    // 모두 이동 완료 시 세트 리셋 후 다시 1순위부터
+    if (!target) {
+      this._kiteMovedSet.clear();
+      target = fieldUnits[0];
+    }
+
+    // --- 이 유닛 1개만 이동 ---
+    const unitRange = target.dataVal.range || 100;
+    const idealR = Math.max(60, orbitR - unitRange * 0.8);
+    const jitter = (Math.random() - 0.5) * 15;
+    const placeDist = Phaser.Math.Clamp(idealR + jitter, 60, orbitR - 30);
+
+    // 보스 방향 근처에 배치 (기존 유닛과 겹치지 않게)
+    const baseAngle = bossAngle + (Math.random() - 0.5) * 0.6;
+    let fx = this.mapCenter.x + Math.cos(baseAngle) * placeDist;
+    let fy = this.mapCenter.y + Math.sin(baseAngle) * placeDist;
+
+    const MIN_DIST = 40;
+    const isOverlapping = (px, py) => {
+      let overlap = false;
+      this.units.children.iterate((other) => {
+        if (!other || !other.active || other === target) return;
+        if (other.gridX !== -1) return;
+        const d = Phaser.Math.Distance.Between(px, py, other.x, other.y);
+        if (d < MIN_DIST) overlap = true;
+      });
+      return overlap;
+    };
+
+    if (isOverlapping(fx, fy)) {
+      for (let attempt = 1; attempt <= 8; attempt++) {
+        const tryAngle = baseAngle + (attempt * Math.PI * 2) / 8;
+        const tryX = this.mapCenter.x + Math.cos(tryAngle) * placeDist;
+        const tryY = this.mapCenter.y + Math.sin(tryAngle) * placeDist;
+        if (!isOverlapping(tryX, tryY)) {
+          fx = tryX;
+          fy = tryY;
+          break;
+        }
+      }
+    }
+
+    // 부드러운 이동 (짧은 duration으로 DPS 손실 최소화)
+    this.tweens.add({
+      targets: target,
+      x: fx,
+      y: fy,
+      duration: 200,
+      ease: "Power2",
+    });
+
+    this._kiteMovedSet.add(target);
+
+    // 쿨다운: 0.3초 (1개씩 빠르게 이동)
+    this.kiteCooldown = Date.now() + 300;
+
+    return 1;
   }
 
   _rlSellUnitByKey(unitKey) {

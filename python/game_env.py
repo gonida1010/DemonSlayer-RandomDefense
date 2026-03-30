@@ -20,6 +20,7 @@ from game_data import (
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
     ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, ACTION_KITE_TO_BOSS,
+    ACTION_SET_SPEED_1X, ACTION_SET_SPEED_2X, ACTION_SET_SPEED_3X, ACTION_SET_SPEED_5X,
     OBS_UNIT_COUNT_START,
     get_normal_enemy_hp, get_kill_gold, get_boss_hp, get_boss_kill_gold,
     get_required_dps,
@@ -31,7 +32,7 @@ class DemonSlayerEnv(gym.Env):
     """
     귀멸의 칼날 랜덤 디펜스 - 강화학습 환경 (하드 모드, 무한 라운드)
 
-        관측 공간 (75차원):
+        관측 공간 (76차원):
       [0]  round / 200 (무한 모드: 200으로 정규화)
       [1]  gold / 10000
       [2]  time_remaining / 60
@@ -39,7 +40,7 @@ class DemonSlayerEnv(gym.Env):
       [4]  boss_alive (0 or 1)
       [5]  boss_hp_ratio
       [6]  field_dps / 500000
-      [7]  field_unit_count / 30
+    [7]  field_unit_count / 40
       [8]  empty_grid_slots / 36
       [9]  valid_combine_count / 54
             [10] required_dps / 500000
@@ -50,9 +51,10 @@ class DemonSlayerEnv(gym.Env):
             [15] best_valid_combine_tier / 6
             [16] focus_boss (0 or 1)
             [17] kite_cooldown (0~1, 0=사용가능)
-            [18..74] 유닛 타입별 보유 수 (그리드+필드) / 10
+            [18] current_speed / 5
+            [19..75] 유닛 타입별 보유 수 (그리드+필드) / 10
 
-        행동 공간 (175개 이산 행동):
+        행동 공간 (179개 이산 행동):
       0: 대기 (WAIT)
       1: 소환 (SUMMON)
       2~58:  배치 (PLACE unit_type)
@@ -63,6 +65,10 @@ class DemonSlayerEnv(gym.Env):
             172: 골드 소진까지 소환
             173: 보스 집중 공격 토글 (FOCUS_BOSS)
             174: 보스 위치로 전체 유닛 재배치 (KITE_TO_BOSS)
+            175: 속도 1x 설정
+            176: 속도 2x 설정
+            177: 속도 3x 설정
+            178: 속도 5x 설정
     """
 
     metadata = {'render_modes': []}
@@ -105,6 +111,7 @@ class DemonSlayerEnv(gym.Env):
         self.boss_spawned = False
         self.focus_boss = False
         self.kite_cooldown = 0.0  # 카이팅 재사용 대기 (초)
+        self.game_speed = 1.0
         self.spawn_acc = 0.0
         self.total_steps = 0
         self._recent_combines = 0
@@ -198,6 +205,15 @@ class DemonSlayerEnv(gym.Env):
         if boss_alive and self.field_units and self.kite_cooldown <= 0:
             mask[ACTION_KITE_TO_BOSS] = True
 
+        if self.game_speed != 1.0:
+            mask[ACTION_SET_SPEED_1X] = True
+        if self.game_speed != 2.0:
+            mask[ACTION_SET_SPEED_2X] = True
+        if self.game_speed != 3.0:
+            mask[ACTION_SET_SPEED_3X] = True
+        if self.game_speed != 5.0:
+            mask[ACTION_SET_SPEED_5X] = True
+
         return mask
 
     # =================================================================
@@ -249,6 +265,9 @@ class DemonSlayerEnv(gym.Env):
 
         # 카이팅 쿨다운 상태 (0=사용가능, 1=최대쿨)
         obs[17] = min(self.kite_cooldown / 0.3, 1.0)
+
+        # 현재 게임 배속 상태
+        obs[18] = min(self.game_speed / 5.0, 1.0)
 
         # 유닛 타입별 보유 수 (그리드 + 필드)
         counts = [0] * NUM_UNIT_TYPES
@@ -315,6 +334,18 @@ class DemonSlayerEnv(gym.Env):
 
         if action == ACTION_KITE_TO_BOSS:
             return self._kite_to_boss()
+
+        if action == ACTION_SET_SPEED_1X:
+            return self._set_speed(1.0)
+
+        if action == ACTION_SET_SPEED_2X:
+            return self._set_speed(2.0)
+
+        if action == ACTION_SET_SPEED_3X:
+            return self._set_speed(3.0)
+
+        if action == ACTION_SET_SPEED_5X:
+            return self._set_speed(5.0)
 
         return self.rewards.INVALID_ACTION_PENALTY
 
@@ -565,6 +596,18 @@ class DemonSlayerEnv(gym.Env):
             reward += 0.8
 
         return reward
+
+    def _set_speed(self, target_speed):
+        if self.game_speed == target_speed:
+            return self.rewards.INVALID_ACTION_PENALTY
+
+        self.game_speed = target_speed
+
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        enemy_pressure = len(self.enemies) / max(GAME_CONFIG['maxEnemies'], 1)
+        if boss_alive or enemy_pressure >= 0.5:
+            return 0.08 if target_speed <= 2.0 else -0.04
+        return 0.04 if target_speed >= 3.0 else 0.0
 
     def _get_best_valid_combine_recipe_idx(self):
         owned_counts = self._get_owned_unit_counts()

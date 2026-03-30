@@ -5426,6 +5426,7 @@ class GameScene extends Phaser.Scene {
       round: this.round,
       gold: this.gold,
       timeRemaining: this.currentTime,
+      timeScale: this.time.timeScale,
       gridState: gridState,
       fieldUnits: fieldUnits,
       enemies: enemies,
@@ -5518,6 +5519,17 @@ class GameScene extends Phaser.Scene {
       case "kite_to_boss": {
         const moved = this._rlKiteToBoss();
         actionDesc = moved > 0 ? `KITE ${moved} units` : "KITE MISS";
+        break;
+      }
+
+      case "set_speed": {
+        const targetSpeed = Number(params?.speed);
+        if ([1, 2, 3, 5].includes(targetSpeed)) {
+          this.applySpeedChange(targetSpeed);
+          actionDesc = `SPEED ${targetSpeed}x`;
+        } else {
+          actionDesc = "SPEED MISS";
+        }
         break;
       }
 
@@ -5671,7 +5683,7 @@ class GameScene extends Phaser.Scene {
     });
     if (!boss) return 0;
 
-    // 쿨다운 체크 (0.3초 — 유닛 1개씩 이동하므로 짧은 쿨다운)
+    // 쿨다운 체크
     if (this.kiteCooldown > Date.now()) return 0;
 
     // 보스 집중 모드 자동 활성화
@@ -5749,19 +5761,27 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // 부드러운 이동 (짧은 duration으로 DPS 손실 최소화)
-    this.tweens.add({
-      targets: target,
-      x: fx,
-      y: fy,
-      duration: 200,
-      ease: "Power2",
-    });
+    // 보스전 반응성 확보: tween 없이 즉시 위치 갱신
+    this.tweens.killTweensOf(target);
+    target.x = fx;
+    target.y = fy;
+
+    // 이동 직후 바로 사거리 판정에 들어갈 수 있게 공격 쿨다운을 열어준다.
+    const adjustedSpeed =
+      (target.dataVal.speed || 1000) / Math.max(this.time.timeScale || 1, 1);
+    target.lastFired = Math.min(
+      target.lastFired || 0,
+      this.time.now - adjustedSpeed,
+    );
 
     this._kiteMovedSet.add(target);
 
-    // 쿨다운: 0.3초 (1개씩 빠르게 이동)
-    this.kiteCooldown = Date.now() + 300;
+    // 실제 호출 주기는 Python 브릿지가 제어하므로 게임 내부 쿨다운은 최소화
+    const reactionDelayMs = Math.max(
+      0,
+      Math.floor(40 / Math.max(this.time.timeScale || 1, 1)),
+    );
+    this.kiteCooldown = Date.now() + reactionDelayMs;
 
     return 1;
   }
@@ -5994,6 +6014,7 @@ class GameScene extends Phaser.Scene {
             `Model: ${this.rlOverlay.currentModel}`,
             `Action: ${this.rlOverlay.lastAction}`,
             `Steps: ${this.rlOverlay.actionCount}  |  Round: ${this.round || 0}`,
+            `Speed: ${this.time.timeScale || 1}x`,
             `Field: ${fieldCount} units  |  Grid: ${gridFilled}/36`,
             `DPS: ${fieldDps.toLocaleString("en-US", { maximumFractionDigits: 0 })}  |  Gold: ${this.gold || 0}`,
             `Enemies: ${this.enemies ? this.enemies.countActive() : 0}`,
@@ -6005,11 +6026,12 @@ class GameScene extends Phaser.Scene {
     });
 
     // Python 연결 시 상태 변경
-    socket.on("rl_mode_start", () => {
+    socket.on("rl_mode_start", (data) => {
       if (this.rlStatusText) {
         this.rlTitle.setText("🤖 AI AGENT ● LIVE");
         this.rlTitle.setColor("#00ff00");
       }
+      this.applySpeedChange(data?.speed || 1);
     });
 
     // 모델 로드 완료 이벤트
@@ -6215,8 +6237,6 @@ async function bootstrap() {
           const gameScene = game.scene.getScene("GameScene");
           if (gameScene) {
             gameScene.initRLMode();
-            // RL 모드에서는 최고 속도로 실행
-            gameScene.applySpeedChange(5.0);
           }
         }, 1000);
       }, 500);

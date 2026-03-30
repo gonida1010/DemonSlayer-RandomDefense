@@ -225,9 +225,10 @@ def get_boss_hp(round_num):
 # 172: SUMMON_UNTIL_FULL
 # 173: FOCUS_BOSS (보스 집중 공격 토글)
 # 174: KITE_TO_BOSS (보스 위치로 전체 유닛 재배치)
-OBS_STRATEGY_DIM = 8
+# 175~178: SET_SPEED_(1X|2X|3X|5X)
+OBS_STRATEGY_DIM = 9
 OBS_UNIT_COUNT_START = 10 + OBS_STRATEGY_DIM
-OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 75
+OBS_DIM = OBS_UNIT_COUNT_START + NUM_UNIT_TYPES  # 76
 
 # =====================================================================
 # 시너지 (Synergy) - T6 유닛 조합 보너스
@@ -274,7 +275,11 @@ ACTION_MACRO_COMBINE_BEST = ACTION_MACRO_PLACE_BEST + 1      # 171
 ACTION_MACRO_SUMMON_ALL = ACTION_MACRO_COMBINE_BEST + 1      # 172
 ACTION_FOCUS_BOSS = ACTION_MACRO_SUMMON_ALL + 1              # 173
 ACTION_KITE_TO_BOSS = ACTION_FOCUS_BOSS + 1                  # 174
-NUM_ACTIONS = ACTION_KITE_TO_BOSS + 1                        # 175
+ACTION_SET_SPEED_1X = ACTION_KITE_TO_BOSS + 1                # 175
+ACTION_SET_SPEED_2X = ACTION_SET_SPEED_1X + 1                # 176
+ACTION_SET_SPEED_3X = ACTION_SET_SPEED_2X + 1                # 177
+ACTION_SET_SPEED_5X = ACTION_SET_SPEED_3X + 1                # 178
+NUM_ACTIONS = ACTION_SET_SPEED_5X + 1                        # 179
 
 # 소환 확률 (JS 코드와 동일)
 SUMMON_PROBS = {1: 0.70, 2: 0.20, 3: 0.10}

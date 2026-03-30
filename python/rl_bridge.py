@@ -38,6 +38,7 @@ from game_data import (
     ACTION_PLACE_START, ACTION_SELL_START, ACTION_COMBINE_START,
     ACTION_MACRO_PLACE_BEST, ACTION_MACRO_COMBINE_BEST,
     ACTION_MACRO_SUMMON_ALL, ACTION_FOCUS_BOSS, ACTION_KITE_TO_BOSS,
+    ACTION_SET_SPEED_1X, ACTION_SET_SPEED_2X, ACTION_SET_SPEED_3X, ACTION_SET_SPEED_5X,
     OBS_UNIT_COUNT_START,
     get_required_dps, SYNERGIES,
 )
@@ -103,7 +104,7 @@ class RLBridge:
         @self.sio.on('connect')
         def on_connect():
             print("서버 연결 성공!")
-            self.sio.emit('rl_connect', {'speed': 10})
+            self.sio.emit('rl_connect', {'speed': 1})
 
         @self.sio.on('rl_game_ready')
         def on_game_ready():
@@ -228,6 +229,9 @@ class RLBridge:
         # 카이팅 쿨다운 상태
         obs[17] = min(state.get('kiteCooldown', 0) / 0.3, 1.0)
 
+        # 현재 게임 배속 상태
+        obs[18] = min(float(state.get('timeScale', 1.0) or 1.0) / 5.0, 1.0)
+
         for i in range(NUM_UNIT_TYPES):
             obs[OBS_UNIT_COUNT_START + i] = min(counts[i] / 10.0, 1.0)
 
@@ -280,6 +284,16 @@ class RLBridge:
         if boss_alive and len(field_units) > 0 and state.get('kiteCooldown', 0) <= 0:
             mask[ACTION_KITE_TO_BOSS] = True
 
+        current_speed = float(state.get('timeScale', 1.0) or 1.0)
+        if current_speed != 1.0:
+            mask[ACTION_SET_SPEED_1X] = True
+        if current_speed != 2.0:
+            mask[ACTION_SET_SPEED_2X] = True
+        if current_speed != 3.0:
+            mask[ACTION_SET_SPEED_3X] = True
+        if current_speed != 5.0:
+            mask[ACTION_SET_SPEED_5X] = True
+
         return mask
 
     def action_to_command(self, action):
@@ -307,6 +321,14 @@ class RLBridge:
             return {'type': 'focus_boss', 'params': {}}
         if action == ACTION_KITE_TO_BOSS:
             return {'type': 'kite_to_boss', 'params': {}}
+        if action == ACTION_SET_SPEED_1X:
+            return {'type': 'set_speed', 'params': {'speed': 1}}
+        if action == ACTION_SET_SPEED_2X:
+            return {'type': 'set_speed', 'params': {'speed': 2}}
+        if action == ACTION_SET_SPEED_3X:
+            return {'type': 'set_speed', 'params': {'speed': 3}}
+        if action == ACTION_SET_SPEED_5X:
+            return {'type': 'set_speed', 'params': {'speed': 5}}
         return {'type': 'wait', 'params': {}}
 
     def predict_action(self, obs, mask):
@@ -435,7 +457,15 @@ class RLBridge:
                 params_str = ', '.join(f"{k}={v}" for k, v in command.get('params', {}).items())
                 print(f"  [{step:>5}] {command['type'].upper():>7}  {params_str}")
 
-            time.sleep(decision_interval)
+            speed_scale = max(float(state.get('timeScale', 1.0) or 1.0), 1.0)
+            boss_alive = any(enemy.get('isBoss') for enemy in state.get('enemies', []))
+            field_count = len(state.get('fieldUnits', []))
+
+            effective_interval = max(0.005, decision_interval / speed_scale)
+            if boss_alive and field_count > 0:
+                effective_interval = min(effective_interval, 0.02)
+
+            time.sleep(effective_interval)
 
         print("RL 브릿지 종료")
 
@@ -452,7 +482,7 @@ def main():
                         choices=['ppo', 'recurrent', 'dqn'],
                         help='알고리즘 (기본: ppo)')
     parser.add_argument('--url', type=str, default='http://localhost:3000', help='서버 URL')
-    parser.add_argument('--interval', type=float, default=0.5, help='결정 간격 (초)')
+    parser.add_argument('--interval', type=float, default=0.05, help='기본 결정 간격 (초, 배속에 따라 추가 단축)')
     parser.add_argument('--ai-battle', action='store_true',
                         help='AI 대전 대기 모드 (서버에서 요청 시 시뮬레이션 수행)')
     args = parser.parse_args()

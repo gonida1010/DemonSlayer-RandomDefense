@@ -66,7 +66,11 @@ if (typeof io !== "undefined") {
 
     const isHost = data.players[0].id === myId;
     if (game) {
-      game.scene.start("GameScene", { isHost: isHost, roomName: myRoomName });
+      game.scene.start("GameScene", {
+        isHost: isHost,
+        roomName: myRoomName,
+        mode: "multi",
+      });
     }
   });
 } else {
@@ -849,10 +853,10 @@ class MenuScene extends Phaser.Scene {
       }
     } else if (currentMode === "aibattle") {
       await loadDataForMode("hard");
-      this.scene.start("GameScene", { isAIBattle: true });
+      this.scene.start("GameScene", { isAIBattle: true, mode: "aibattle" });
     } else {
       await loadDataForMode(currentMode);
-      this.scene.start("GameScene");
+      this.scene.start("GameScene", { mode: currentMode });
     }
   }
 }
@@ -896,12 +900,29 @@ class GameScene extends Phaser.Scene {
 
     // AI 대전 모드
     this.isAIBattle = !!safeData.isAIBattle;
+    this.modeName = safeData.mode || currentMode || "normal";
+    if (this.isMultiplayer) this.modeName = "multi";
+    if (this.isAIBattle) this.modeName = "aibattle";
+    currentMode = this.modeName;
     this.aiBattleState = null; // AI 진행 상황
     this.aiBattleResult = null; // AI 최종 결과
 
     console.log(
-      `게임 초기화: Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}, AIBattle=${this.isAIBattle}`,
+      `게임 초기화: Mode=${this.modeName}, Host=${this.isHost}, Room=${this.myRoomName}, Multi=${this.isMultiplayer}, AIBattle=${this.isAIBattle}`,
     );
+  }
+
+  getActiveMode() {
+    return this.modeName || currentMode || "normal";
+  }
+
+  isStoryMode() {
+    return this.getActiveMode() === "normal";
+  }
+
+  isHardLikeMode() {
+    const mode = this.getActiveMode();
+    return mode === "hard" || mode === "multi" || mode === "aibattle";
   }
 
   getTierColor(tier) {
@@ -2821,14 +2842,14 @@ class GameScene extends Phaser.Scene {
       if (this.round >= 20) baseHp = baseHp * 1.5;
 
       // [하드 모드]
-      if (currentMode === "hard") {
+      if (this.getActiveMode() === "hard") {
         if (this.round > 1) baseHp += this.round * this.round * 150;
         baseHp = baseHp * 1.5;
         if (this.round > 90) baseHp = baseHp * Math.pow(1.03, this.round - 90);
       }
 
       // [★수정] 멀티 모드
-      if (currentMode === "multi") {
+      if (this.getActiveMode() === "multi") {
         // 1. 하드 모드와 똑같은 제곱 공식 적용
         if (this.round > 1) baseHp += this.round * this.round * 150;
 
@@ -2926,9 +2947,7 @@ class GameScene extends Phaser.Scene {
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배
         if (
           this.round > 90 &&
-          (currentMode === "hard" ||
-            currentMode === "multi" ||
-            currentMode === "aibattle")
+          this.isHardLikeMode()
         ) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
@@ -2936,11 +2955,7 @@ class GameScene extends Phaser.Scene {
         this.showGoldEffect(ex, ey, `+${reward}G`, "#ff0000", 30);
       } else {
         // 멀티/하드 모드 보상
-        if (
-          currentMode === "hard" ||
-          currentMode === "multi" ||
-          currentMode === "aibattle"
-        ) {
+        if (this.isHardLikeMode()) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
           if (this.round > 90) {
@@ -4425,28 +4440,20 @@ class GameScene extends Phaser.Scene {
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배 추가 보상
         if (
           this.round > 90 &&
-          (currentMode === "hard" ||
-            currentMode === "multi" ||
-            currentMode === "aibattle" ||
-            this.isAIBattle)
+          this.isHardLikeMode()
         ) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
         this.showGoldEffect(e.x, e.y, `+${reward}G`, "#ff0000", 30);
-        if (currentMode === "normal" && this.round === 90) {
+        if (this.isStoryMode() && this.round === 90) {
           console.log("스토리 모드 클리어!");
           this.gameClear();
           return;
         }
       } else {
         // [하드 모드 & 멀티 모드 & AI 대전] 보상 상향
-        if (
-          currentMode === "hard" ||
-          currentMode === "multi" ||
-          currentMode === "aibattle" ||
-          this.isAIBattle
-        ) {
+        if (this.isHardLikeMode()) {
           reward = 7 + Math.floor(this.round / 4);
           if (reward > 20) reward = 20;
           // 90라운드 이후: 5라운드당 1.1배 추가 보상
@@ -4835,8 +4842,7 @@ class GameScene extends Phaser.Scene {
   async saveClearRecord() {
     if (!db || !currentPlayerName) return;
     try {
-      await addDoc(collection(db, "scores_normal"), {
-        // 노멀 모드 점수판
+      await addDoc(collection(db, getScoreCollectionName(this.getActiveMode())), {
         name: currentPlayerName,
         round: 90, // 클리어는 무조건 90라운드
         isClear: true, // 클리어 여부 표시
@@ -4930,7 +4936,7 @@ class GameScene extends Phaser.Scene {
         let saveName = currentPlayerName;
 
         // "멀티 모드"이고 "파트너 이름이 있을 때"만 이름을 합침
-        if (currentMode === "multi" && partnerName !== "") {
+        if (this.getActiveMode() === "multi" && partnerName !== "") {
           saveName = `${currentPlayerName} & ${partnerName}`;
           // 예: "탄지로 & 네즈코"
         }
@@ -4941,7 +4947,7 @@ class GameScene extends Phaser.Scene {
         );
 
         await Promise.race([
-          addDoc(collection(db, getScoreCollectionName(currentMode)), {
+          addDoc(collection(db, getScoreCollectionName(this.getActiveMode())), {
             name: saveName,
             round: this.round,
             createdAt: new Date().toISOString(),
@@ -6031,7 +6037,7 @@ class GameScene extends Phaser.Scene {
         this.rlTitle.setText("🤖 AI AGENT ● LIVE");
         this.rlTitle.setColor("#00ff00");
       }
-      this.applySpeedChange(data?.speed || 1);
+      this.applySpeedChange(data?.speed || 5);
     });
 
     // 모델 로드 완료 이벤트
@@ -6174,8 +6180,16 @@ class GameScene extends Phaser.Scene {
 // RL 모드 감지 (URL 파라미터: ?rl=true)
 const urlParams = new URLSearchParams(window.location.search);
 const isRLMode = urlParams.get("rl") === "true";
+const rlRequestedMode = isRLMode
+  ? (() => {
+      const requested = (urlParams.get("mode") || "hard").toLowerCase();
+      return ["normal", "hard", "aibattle"].includes(requested)
+        ? requested
+        : "hard";
+    })()
+  : null;
 if (isRLMode) {
-  console.log("🤖 RL 모드 감지됨");
+  console.log(`🤖 RL 모드 감지됨 (${rlRequestedMode})`);
 }
 
 const config = {
@@ -6215,14 +6229,14 @@ async function loadDataForMode(mode) {
 // === Phaser 게임 부트스트랩 ===
 async function bootstrap() {
   // 초기 실행을 위해 기본 데이터 하나는 로드해둡니다 (에러 방지용)
-  await loadDataForMode("normal");
+  await loadDataForMode(isRLMode ? (rlRequestedMode === "aibattle" ? "hard" : rlRequestedMode) : "normal");
 
   game = new Phaser.Game(config);
 
   // RL 모드일 때 자동 시작
   if (isRLMode) {
     currentPlayerName = "RL_Agent";
-    currentMode = "normal";
+    currentMode = rlRequestedMode;
     overlay.style.display = "none";
 
     // 게임이 준비되면 자동 시작
@@ -6231,7 +6245,10 @@ async function bootstrap() {
       // MenuScene을 바로 건너뛰고 GameScene으로
       setTimeout(() => {
         game.scene.stop("MenuScene");
-        game.scene.start("GameScene");
+        game.scene.start("GameScene", {
+          mode: rlRequestedMode,
+          isAIBattle: rlRequestedMode === "aibattle",
+        });
         // GameScene이 생성된 후 RL 모드 초기화
         setTimeout(() => {
           const gameScene = game.scene.getScene("GameScene");

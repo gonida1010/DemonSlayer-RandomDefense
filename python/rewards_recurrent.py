@@ -110,6 +110,31 @@ FOCUS_BOSS_REWARD = 0.6
 KITE_REWARD = 1.2
 
 
+def speed_state_reward(game_speed, enemy_ratio, boss_alive, time_remaining, dt):
+    if boss_alive or enemy_ratio >= 0.55:
+        if game_speed <= 2.0:
+            return 0.1 * dt
+        if game_speed >= 5.0:
+            return -0.18 * dt
+        return -0.05 * dt
+
+    if enemy_ratio <= 0.2 and time_remaining > 15:
+        if game_speed >= 5.0:
+            return 0.07 * dt
+        if game_speed >= 3.0:
+            return 0.04 * dt
+        return -0.03 * dt
+
+    if enemy_ratio <= 0.35:
+        if game_speed >= 3.0:
+            return 0.04 * dt
+        if game_speed == 2.0:
+            return 0.015 * dt
+        return -0.02 * dt
+
+    return 0.03 * dt if game_speed == 2.0 else (-0.025 * dt if game_speed >= 5.0 else 0.0)
+
+
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소 진행 보상 (LSTM: 장기 보스전 진행 추적)"""
     base = hp_drop_ratio * 12.0

@@ -111,7 +111,7 @@ class DemonSlayerEnv(gym.Env):
         self.boss_spawned = False
         self.focus_boss = False
         self.kite_cooldown = 0.0  # 카이팅 재사용 대기 (초)
-        self.game_speed = 1.0
+        self.game_speed = 5.0  # 기본은 5배속, 위험 시 에이전트가 감속
         self.spawn_acc = 0.0
         self.total_steps = 0
         self._recent_combines = 0
@@ -138,7 +138,8 @@ class DemonSlayerEnv(gym.Env):
             self._recent_combines = max(0, self._recent_combines - 1)
 
         action_reward = self._execute_action(int(action))
-        sim_reward = self._simulate(self.STEP_DURATION)
+        sim_duration = self.STEP_DURATION * self.game_speed
+        sim_reward = self._simulate(sim_duration)
 
         reward = action_reward + sim_reward
         terminated = self.game_over
@@ -601,13 +602,33 @@ class DemonSlayerEnv(gym.Env):
         if self.game_speed == target_speed:
             return self.rewards.INVALID_ACTION_PENALTY
 
+        previous_speed = self.game_speed
         self.game_speed = target_speed
 
         boss_alive = any(e['is_boss'] for e in self.enemies)
         enemy_pressure = len(self.enemies) / max(GAME_CONFIG['maxEnemies'], 1)
-        if boss_alive or enemy_pressure >= 0.5:
-            return 0.08 if target_speed <= 2.0 else -0.04
-        return 0.04 if target_speed >= 3.0 else 0.0
+        if boss_alive or enemy_pressure >= 0.55:
+            if target_speed <= 2.0:
+                return 0.3 if previous_speed > target_speed else 0.15
+            if target_speed >= 5.0:
+                return -0.35
+            return -0.12
+
+        if enemy_pressure <= 0.2 and self.time_remaining > 15:
+            if target_speed >= 5.0:
+                return 0.25
+            if target_speed >= 3.0:
+                return 0.12
+            return -0.08
+
+        if enemy_pressure <= 0.35:
+            if target_speed >= 3.0:
+                return 0.08
+            if target_speed == 2.0:
+                return 0.03
+            return -0.05
+
+        return 0.05 if target_speed == 2.0 else (-0.03 if target_speed >= 5.0 else 0.0)
 
     def _get_best_valid_combine_recipe_idx(self):
         owned_counts = self._get_owned_unit_counts()
@@ -727,6 +748,18 @@ class DemonSlayerEnv(gym.Env):
         if self.enemies:
             danger = len(self.enemies) / GAME_CONFIG['maxEnemies']
             reward += self.rewards.danger_penalty(danger, dt)
+
+        # --- 3.2. 현재 배속 유지 보상/패널티 ---
+        if hasattr(self.rewards, 'speed_state_reward'):
+            danger = len(self.enemies) / GAME_CONFIG['maxEnemies'] if self.enemies else 0.0
+            boss_alive = any(e['is_boss'] for e in self.enemies)
+            reward += self.rewards.speed_state_reward(
+                self.game_speed,
+                danger,
+                boss_alive,
+                self.time_remaining,
+                dt,
+            )
 
         # --- 3.5. 그리드 방치 패널티 ---
         if hasattr(self.rewards, 'grid_idle_penalty'):

@@ -117,6 +117,35 @@ FOCUS_BOSS_REWARD = 0.5
 KITE_REWARD = 1.0
 
 
+def speed_state_reward(game_speed, enemy_ratio, boss_alive, time_remaining, dt):
+    """현재 배속 유지에 대한 shaping.
+    평시에는 5x로 빠르게 운영하고,
+    보스전/과밀 상황에서는 1x~2x로 낮춰 반응성을 확보하도록 유도.
+    """
+    if boss_alive or enemy_ratio >= 0.55:
+        if game_speed <= 2.0:
+            return 0.08 * dt
+        if game_speed >= 5.0:
+            return -0.16 * dt
+        return -0.04 * dt
+
+    if enemy_ratio <= 0.2 and time_remaining > 15:
+        if game_speed >= 5.0:
+            return 0.06 * dt
+        if game_speed >= 3.0:
+            return 0.03 * dt
+        return -0.03 * dt
+
+    if enemy_ratio <= 0.35:
+        if game_speed >= 3.0:
+            return 0.03 * dt
+        if game_speed == 2.0:
+            return 0.01 * dt
+        return -0.02 * dt
+
+    return 0.02 * dt if game_speed == 2.0 else (-0.02 * dt if game_speed >= 5.0 else 0.0)
+
+
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소에 따른 중간 보상.
     hp_drop_ratio: 이번 틱에서 줄어든 HP 비율 (0~1)

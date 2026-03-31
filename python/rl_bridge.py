@@ -104,7 +104,7 @@ class RLBridge:
         @self.sio.on('connect')
         def on_connect():
             print("서버 연결 성공!")
-            self.sio.emit('rl_connect', {'speed': 1})
+            self.sio.emit('rl_connect', {'speed': 5})
 
         @self.sio.on('rl_game_ready')
         def on_game_ready():

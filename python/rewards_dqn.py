@@ -91,6 +91,31 @@ FOCUS_BOSS_REWARD = 0.4
 KITE_REWARD = 0.8
 
 
+def speed_state_reward(game_speed, enemy_ratio, boss_alive, time_remaining, dt):
+    if boss_alive or enemy_ratio >= 0.55:
+        if game_speed <= 2.0:
+            return 0.06 * dt
+        if game_speed >= 5.0:
+            return -0.12 * dt
+        return -0.03 * dt
+
+    if enemy_ratio <= 0.2 and time_remaining > 15:
+        if game_speed >= 5.0:
+            return 0.04 * dt
+        if game_speed >= 3.0:
+            return 0.02 * dt
+        return -0.02 * dt
+
+    if enemy_ratio <= 0.35:
+        if game_speed >= 3.0:
+            return 0.02 * dt
+        if game_speed == 2.0:
+            return 0.008 * dt
+        return -0.015 * dt
+
+    return 0.015 * dt if game_speed == 2.0 else (-0.015 * dt if game_speed >= 5.0 else 0.0)
+
+
 def boss_damage_progress_reward(hp_drop_ratio, round_num):
     """보스 HP 감소 진행 보상 (DQN: 밀집 보상으로 단계적 학습)"""
     base = hp_drop_ratio * 8.0

@@ -2945,10 +2945,7 @@ class GameScene extends Phaser.Scene {
       if (isBoss) {
         reward = 1000;
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배
-        if (
-          this.round > 90 &&
-          this.isHardLikeMode()
-        ) {
+        if (this.round > 90 && this.isHardLikeMode()) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
@@ -4438,10 +4435,7 @@ class GameScene extends Phaser.Scene {
       if (e.isBoss) {
         reward = 1000;
         // 90라운드 이후 하드/멀티/AI대전: 5라운드당 1.1배 추가 보상
-        if (
-          this.round > 90 &&
-          this.isHardLikeMode()
-        ) {
+        if (this.round > 90 && this.isHardLikeMode()) {
           const scaleTicks = Math.floor((this.round - 90) / 5);
           reward = Math.floor(reward * Math.pow(1.1, scaleTicks));
         }
@@ -4842,12 +4836,15 @@ class GameScene extends Phaser.Scene {
   async saveClearRecord() {
     if (!db || !currentPlayerName) return;
     try {
-      await addDoc(collection(db, getScoreCollectionName(this.getActiveMode())), {
-        name: currentPlayerName,
-        round: 90, // 클리어는 무조건 90라운드
-        isClear: true, // 클리어 여부 표시
-        createdAt: new Date().toISOString(),
-      });
+      await addDoc(
+        collection(db, getScoreCollectionName(this.getActiveMode())),
+        {
+          name: currentPlayerName,
+          round: 90, // 클리어는 무조건 90라운드
+          isClear: true, // 클리어 여부 표시
+          createdAt: new Date().toISOString(),
+        },
+      );
       console.log("클리어 기록 저장 완료");
     } catch (e) {
       console.error("저장 실패", e);
@@ -6229,7 +6226,13 @@ async function loadDataForMode(mode) {
 // === Phaser 게임 부트스트랩 ===
 async function bootstrap() {
   // 초기 실행을 위해 기본 데이터 하나는 로드해둡니다 (에러 방지용)
-  await loadDataForMode(isRLMode ? (rlRequestedMode === "aibattle" ? "hard" : rlRequestedMode) : "normal");
+  await loadDataForMode(
+    isRLMode
+      ? rlRequestedMode === "aibattle"
+        ? "hard"
+        : rlRequestedMode
+      : "normal",
+  );
 
   game = new Phaser.Game(config);
 

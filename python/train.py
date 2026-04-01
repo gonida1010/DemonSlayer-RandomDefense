@@ -28,6 +28,7 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import (
     BaseCallback, CallbackList
 )
+from stable_baselines3.common.utils import get_schedule_fn
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
@@ -302,6 +303,19 @@ def train_ppo(args, timesteps, device):
         print(f"  모델 로드: {resume_path}")
         model = MaskablePPO.load(resume_path, env=env, device=device)
         model.learning_rate = lr
+        model.lr_schedule = get_schedule_fn(lr)
+        model.n_steps = conf['n_steps']
+        model.batch_size = conf['batch_size']
+        model.n_epochs = conf['n_epochs']
+        model.gamma = conf['gamma']
+        model.gae_lambda = conf['gae_lambda']
+        model.clip_range = get_schedule_fn(conf['clip_range'])
+        clip_range_vf = conf.get('clip_range_vf')
+        model.clip_range_vf = None if clip_range_vf is None else get_schedule_fn(clip_range_vf)
+        model.ent_coef = conf['ent_coef']
+        model.vf_coef = conf['vf_coef']
+        model.target_kl = conf.get('target_kl')
+        model.max_grad_norm = conf['max_grad_norm']
     else:
         model = MaskablePPO(
             "MlpPolicy", env,
@@ -312,8 +326,10 @@ def train_ppo(args, timesteps, device):
             gamma=conf['gamma'],
             gae_lambda=conf['gae_lambda'],
             clip_range=conf['clip_range'],
+            clip_range_vf=conf.get('clip_range_vf'),
             ent_coef=conf['ent_coef'],
             vf_coef=conf['vf_coef'],
+            target_kl=conf.get('target_kl'),
             max_grad_norm=conf['max_grad_norm'],
             verbose=1,
             device=device,

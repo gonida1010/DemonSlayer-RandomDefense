@@ -206,14 +206,15 @@ class DemonSlayerEnv(gym.Env):
         if boss_alive and self.field_units and self.kite_cooldown <= 0:
             mask[ACTION_KITE_TO_BOSS] = True
 
-        if self.game_speed != 1.0:
-            mask[ACTION_SET_SPEED_1X] = True
-        if self.game_speed != 2.0:
-            mask[ACTION_SET_SPEED_2X] = True
-        if self.game_speed != 3.0:
-            mask[ACTION_SET_SPEED_3X] = True
-        if self.game_speed != 5.0:
-            mask[ACTION_SET_SPEED_5X] = True
+        if boss_alive:
+            if self.game_speed != 1.0:
+                mask[ACTION_SET_SPEED_1X] = True
+            if self.game_speed != 2.0:
+                mask[ACTION_SET_SPEED_2X] = True
+            if self.game_speed != 3.0:
+                mask[ACTION_SET_SPEED_3X] = True
+            if self.game_speed != 5.0:
+                mask[ACTION_SET_SPEED_5X] = True
 
         return mask
 
@@ -400,8 +401,8 @@ class DemonSlayerEnv(gym.Env):
         best_idx = max(
             place_indices,
             key=lambda idx: (
+                self._placement_priority_score(UNIT_KEYS[idx]),
                 UNIT_DATA[UNIT_KEYS[idx]]['tier'],
-                UNIT_DATA[UNIT_KEYS[idx]]['dps'],
             ),
         )
         return ACTION_PLACE_START + int(best_idx)
@@ -465,13 +466,31 @@ class DemonSlayerEnv(gym.Env):
         self.field_units.append(unit_key)
         self._update_field_dps()
 
-        tier = UNIT_DATA[unit_key]['tier']
-        reward = self.rewards.place_reward(tier)
+        unit_data = UNIT_DATA[unit_key]
+        tier = unit_data['tier']
+        enemy_ratio = len(self.enemies) / max(GAME_CONFIG['maxEnemies'], 1) if self.enemies else 0.0
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        range_efficiency = 1.0
+        if boss_alive:
+            range_efficiency = (
+                self._range_efficiency_focus(unit_data['range'])
+                if self.focus_boss else self._range_efficiency(unit_data['range'])
+            )
+
+        reward = self.rewards.place_reward(
+            tier,
+            unit_dps=unit_data['dps'],
+            range_efficiency=range_efficiency,
+            boss_alive=boss_alive,
+            enemy_ratio=enemy_ratio,
+        )
 
         # 적이 있을 때 배치하면 긴급 보너스 (전투 중 빠른 배치 유도)
         if self.enemies:
-            enemy_ratio = len(self.enemies) / GAME_CONFIG['maxEnemies']
             reward += 0.3 * tier * (0.5 + enemy_ratio)
+
+        if boss_alive and range_efficiency < 0.9:
+            reward -= (0.9 - range_efficiency) * (0.6 + min(unit_data['dps'] / 30000.0, 0.8))
 
         return reward
 
@@ -535,7 +554,7 @@ class DemonSlayerEnv(gym.Env):
             (key for key in self.grid if key is not None),
             default=None,
             key=lambda key: (
-                UNIT_DATA[key]['dps'],
+                self._placement_priority_score(key),
                 UNIT_DATA[key]['tier'],
             ),
         )
@@ -602,33 +621,40 @@ class DemonSlayerEnv(gym.Env):
         if self.game_speed == target_speed:
             return self.rewards.INVALID_ACTION_PENALTY
 
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        if not boss_alive:
+            if target_speed == 5.0:
+                self.game_speed = 5.0
+                return 0.0
+            return self.rewards.INVALID_ACTION_PENALTY
+
         previous_speed = self.game_speed
         self.game_speed = target_speed
 
-        boss_alive = any(e['is_boss'] for e in self.enemies)
         enemy_pressure = len(self.enemies) / max(GAME_CONFIG['maxEnemies'], 1)
-        if boss_alive or enemy_pressure >= 0.55:
+        if enemy_pressure >= 0.55:
             if target_speed <= 2.0:
-                return 0.3 if previous_speed > target_speed else 0.15
+                return 0.35 if previous_speed > target_speed else 0.18
             if target_speed >= 5.0:
-                return -0.35
+                return -0.4
             return -0.12
 
-        if enemy_pressure <= 0.2 and self.time_remaining > 15:
-            if target_speed >= 5.0:
-                return 0.25
-            if target_speed >= 3.0:
-                return 0.12
-            return -0.08
+        if target_speed <= 2.0:
+            return 0.28 if previous_speed > target_speed else 0.12
+        if target_speed == 3.0:
+            return -0.04
+        return -0.32
 
-        if enemy_pressure <= 0.35:
-            if target_speed >= 3.0:
-                return 0.08
-            if target_speed == 2.0:
-                return 0.03
-            return -0.05
-
-        return 0.05 if target_speed == 2.0 else (-0.03 if target_speed >= 5.0 else 0.0)
+    def _placement_priority_score(self, unit_key):
+        unit_data = UNIT_DATA[unit_key]
+        boss_alive = any(e['is_boss'] for e in self.enemies)
+        if boss_alive:
+            efficiency = (
+                self._range_efficiency_focus(unit_data['range'])
+                if self.focus_boss else self._range_efficiency(unit_data['range'])
+            )
+            return unit_data['dps'] * efficiency
+        return unit_data['dps']
 
     def _get_best_valid_combine_recipe_idx(self):
         owned_counts = self._get_owned_unit_counts()
@@ -718,6 +744,7 @@ class DemonSlayerEnv(gym.Env):
         else:
             self.focus_boss = False  # 비보스 라운드에서는 자동 해제
             self.kite_cooldown = 0.0  # 비보스 라운드에서는 쿨다운 초기화
+            self.game_speed = 5.0
             if self.time_remaining > 5:
                 self.spawn_acc += dt
                 interval = GAME_CONFIG['spawnInterval']

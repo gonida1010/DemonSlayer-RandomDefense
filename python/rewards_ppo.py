@@ -27,38 +27,58 @@ def wait_penalty(summons_possible, empty_slots):
 
 
 # 소환 (SUMMON)
-SUMMON_REWARD = 0.04
+SUMMON_REWARD = 0.1
 
 
 # 배치 (PLACE) - 핵심 보상: 조합과 동급으로 상향
-def place_reward(tier):
-    """배치: 조합과 비슷한 수준의 강한 보상
-    유닛을 필드에 놓아야 DPS가 올라가고 생존할 수 있음.
-    T1=0.5, T2=1.2, T3=2.1, T4=3.2, T5=6.5, T6=10.0
+def place_reward(tier, unit_dps=None, range_efficiency=1.0, boss_alive=False, enemy_ratio=0.0):
+    """배치 보상.
+    일반 라운드에서는 빠른 전력 투입을 보상하고,
+    보스전에서는 사거리 기반 실효 DPS가 낮은 배치를 감점한다.
     """
-    base = 0.2 * tier * tier + 0.3 * tier
+    reward = 0.14 * tier * tier + 0.22 * tier
     if tier >= 5:
-        base += 2.0 + (tier - 5) * 1.5
-    return base
+        reward += 1.0 + (tier - 5) * 1.0
+
+    if unit_dps is not None:
+        reward += min(unit_dps / 20000.0, 1.0) * 0.18
+
+    if boss_alive:
+        efficiency_gap = range_efficiency - 0.9
+        dps_weight = 1.0 + min((unit_dps or 0.0) / 30000.0, 1.0)
+        if efficiency_gap >= 0:
+            reward += efficiency_gap * 1.1 * dps_weight
+        else:
+            reward += efficiency_gap * 2.2 * dps_weight
+    else:
+        reward += min(enemy_ratio, 1.0) * 0.1
+
+    return reward
 
 
 # 판매 (SELL)
 def sell_penalty(tier):
-    """판매: 전략적으로만 사용, 별도 보상 없음"""
-    return 0.0
+    """판매: 막힌 저티어 정리 외에는 매우 불리하도록 설정.
+    저티어 정리 여지는 남기되, 고티어/조합 재료 판매를 강하게 억제한다.
+    """
+    return -(0.04 + 0.06 * tier + 0.03 * tier * tier)
 
 
 # 조합 (COMBINE)
-def combine_reward(result_tier):
-    """조합: 배치보다 약간 낮은 보상 (조합만 하고 배치 안 하는 문제 방지)
-    T2=0.72, T3=1.62, T4=2.88, T5=4.50, T6=6.48
-    조합은 중요하지만, 배치 없이는 DPS 기여 불가 → 배치보다 낮게 설정
+def combine_reward(result_tier, consecutive_combines=0):
+    """조합: 시너지 루트와 최고 티어 진입을 강하게 장려.
+    연쇄 조합을 보상하되, 조합만 반복하는 편향을 막기 위해 보너스는 완만히 상한 처리한다.
     """
-    base = 0.18 * result_tier * result_tier
-    high_tier_bonus = 0.0
+    base = 0.18 * result_tier * result_tier + 0.08 * result_tier
+
+    tier_bonus = 0.0
+    if result_tier >= 4:
+        tier_bonus += 0.35 * (result_tier - 3)
     if result_tier >= 5:
-        high_tier_bonus += 2.0 + (result_tier - 5) * 2.0
-    return base + high_tier_bonus
+        tier_bonus += 1.4 + (result_tier - 5) * 1.4
+
+    chain_bonus = min(max(consecutive_combines - 1, 0), 3) * 0.25
+    return base + tier_bonus + chain_bonus
 
 
 # =================================================================
@@ -101,11 +121,11 @@ def round_survival_reward(round_num):
 
 
 # 게임 오버 / 보스 미처치
-GAME_OVER_PENALTY = -10.0
-BOSS_TIMEOUT_PENALTY = -10.0
+GAME_OVER_PENALTY = -100.0
+BOSS_TIMEOUT_PENALTY = -3.0
 
 # 유효하지 않은 행동
-INVALID_ACTION_PENALTY = -0.01
+INVALID_ACTION_PENALTY = -0.1
 
 # 히든 조합 배율
 HIDDEN_COMBINE_MULTIPLIER = 1.5
@@ -119,31 +139,23 @@ KITE_REWARD = 1.0
 
 def speed_state_reward(game_speed, enemy_ratio, boss_alive, time_remaining, dt):
     """현재 배속 유지에 대한 shaping.
-    평시에는 5x로 빠르게 운영하고,
-    보스전/과밀 상황에서는 1x~2x로 낮춰 반응성을 확보하도록 유도.
+    일반 라운드는 5x 고정 운영을 선호하고,
+    보스전에서만 1x~2x 감속을 통해 반응성을 확보하도록 유도.
     """
-    if boss_alive or enemy_ratio >= 0.55:
+    if boss_alive:
         if game_speed <= 2.0:
             return 0.08 * dt
+        if game_speed == 3.0:
+            return -0.005 * dt
         if game_speed >= 5.0:
-            return -0.16 * dt
-        return -0.04 * dt
-
-    if enemy_ratio <= 0.2 and time_remaining > 15:
-        if game_speed >= 5.0:
-            return 0.06 * dt
-        if game_speed >= 3.0:
-            return 0.03 * dt
+            return -0.08 * dt
         return -0.03 * dt
 
-    if enemy_ratio <= 0.35:
-        if game_speed >= 3.0:
-            return 0.03 * dt
-        if game_speed == 2.0:
-            return 0.01 * dt
-        return -0.02 * dt
-
-    return 0.02 * dt if game_speed == 2.0 else (-0.02 * dt if game_speed >= 5.0 else 0.0)
+    if game_speed >= 5.0:
+        return 0.02 * dt if (enemy_ratio <= 0.45 and time_remaining > 5.0) else 0.01 * dt
+    if game_speed >= 3.0:
+        return -0.005 * dt
+    return -0.03 * dt
 
 
 def boss_damage_progress_reward(hp_drop_ratio, round_num):

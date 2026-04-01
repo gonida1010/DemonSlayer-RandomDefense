@@ -42,18 +42,20 @@ LOG_DIR_BASE = os.path.join(BASE_DIR, "tb_logs")
 # 3. MaskablePPO 하이퍼파라미터
 # =============================================================
 PPO_CONFIG = {
-    'learning_rate': 3e-4,
-    'n_steps': 4096,
-    'batch_size': 2048,
-    'n_epochs': 10,
-    'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'clip_range': 0.2,
-    'ent_coef': 0.03,
-    'vf_coef': 0.5,
-    'max_grad_norm': 0.5,
-    'net_arch_pi': [512, 256],
-    'net_arch_vf': [512, 256],
+  'learning_rate': 2.5e-4,
+  'n_steps': 4096,
+  'batch_size': 2048,
+  'n_epochs': 8,
+  'gamma': 0.995,
+  'gae_lambda': 0.97,
+  'clip_range': 0.18,
+  'clip_range_vf': None,
+  'ent_coef': 0.025,
+  'vf_coef': 0.45,
+  'target_kl': 0.04,
+  'max_grad_norm': 0.5,
+  'net_arch_pi': [512, 256],
+  'net_arch_vf': [512, 256],
 }
 
 # =============================================================

@@ -27,9 +27,22 @@ SUMMON_REWARD = 0.03
 
 
 # 배치 (PLACE)
-def place_reward(tier):
-    """배치: 티어별 점진적 보상 (LSTM이 배치 타이밍 학습)"""
-    return 0.08 * tier + 0.02 * tier * tier  # T4=0.64, T5=0.90, T6=1.20
+def place_reward(tier, unit_dps=None, range_efficiency=1.0, boss_alive=False, enemy_ratio=0.0):
+    """배치: 티어 기반 기본 보상에 전황 문맥을 반영.
+    LSTM이 보스전/혼전 타이밍 차이를 시퀀스로 학습할 수 있게
+    즉시 전력 기여와 배치 효율을 약하게 가산한다.
+    """
+    reward = 0.08 * tier + 0.02 * tier * tier
+
+    if unit_dps is not None:
+        reward += min(unit_dps / 25000.0, 1.0) * 0.08
+
+    if boss_alive:
+        reward += (range_efficiency - 0.85) * (0.45 + min((unit_dps or 0.0) / 40000.0, 0.35))
+    else:
+        reward += min(enemy_ratio, 1.0) * 0.06
+
+    return reward  # T4~T6 기본 보상은 유지하고 상황 가중치만 추가
 
 
 # 판매 (SELL)
@@ -94,7 +107,7 @@ def field_composition_bonus(tier_counts):
 
 
 # 게임 오버 / 보스 미처치
-GAME_OVER_PENALTY = -10.0
+GAME_OVER_PENALTY = -50.0
 BOSS_TIMEOUT_PENALTY = -10.0
 
 # 유효하지 않은 행동

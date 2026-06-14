@@ -27,9 +27,21 @@ SUMMON_REWARD = 0.02  # 행동 보상 비중 축소
 
 
 # 배치 (PLACE)
-def place_reward(tier):
-    """배치: DPS 즉시 기여 보상 (DQN에서 즉시 결과 중시)"""
-    return 0.15 * tier  # T1=0.15 ~ T6=0.90
+def place_reward(tier, unit_dps=None, range_efficiency=1.0, boss_alive=False, enemy_ratio=0.0):
+    """배치: 즉시 전력 증가를 중심으로 보상.
+    DQN은 즉시 결과에 민감하므로 DPS와 현재 전장 밀도를 약하게 반영한다.
+    """
+    reward = 0.15 * tier
+
+    if unit_dps is not None:
+        reward += min(unit_dps / 30000.0, 1.0) * 0.06
+
+    if boss_alive:
+        reward += max(range_efficiency - 0.9, -0.3) * 0.25
+    else:
+        reward += min(enemy_ratio, 1.0) * 0.04
+
+    return reward  # T1=0.15 ~ T6=0.90 + 소규모 상황 보정
 
 
 # 판매 (SELL)

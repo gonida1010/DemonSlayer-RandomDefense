@@ -328,8 +328,8 @@ class BootScene extends Phaser.Scene {
 
     // 18. 카나에 (type: "kanae_flower")
     this.load.spritesheet("attack_kanae", "kanae_attack.png", {
-      frameWidth: 32,
-      frameHeight: 32, // 8
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 19. 무이치로 (type: "muichiro_mist")
@@ -1539,7 +1539,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_kanae_spirit",
         frames: this.anims.generateFrameNumbers("attack_kanae_spirit", {
           start: 0,
-          end: 11,
+          end: 7,
         }),
         frameRate: 12,
         repeat: -1,

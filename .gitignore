@@ -52,3 +52,5 @@ desktop.ini
 python/test_logic.py
 tb_logs/
 memo_images/
+package-lock.json
+memo_images/

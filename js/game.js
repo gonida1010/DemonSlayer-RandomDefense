@@ -304,8 +304,8 @@ class BootScene extends Phaser.Scene {
 
     // 14. 기유 (type: "giyu_water")
     this.load.spritesheet("attack_giyu", "giyu_attack.png", {
-      frameWidth: 32,
-      frameHeight: 32,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 15. 렌고쿠 (type: "rengoku_fire")
@@ -322,8 +322,8 @@ class BootScene extends Phaser.Scene {
 
     // 17. 시노부 (type: "shinobu_poison")
     this.load.spritesheet("attack_shinobu", "shinobu_attack.png", {
-      frameWidth: 32,
-      frameHeight: 256 / 8,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 18. 카나에 (type: "kanae_flower")
@@ -340,8 +340,8 @@ class BootScene extends Phaser.Scene {
 
     // 20. 미츠리 (type: "mitsuri_love")
     this.load.spritesheet("attack_mitsuri", "mitsuri_attack.png", {
-      frameWidth: 32, // 8
-      frameHeight: 32,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 21. 오바나이 (type: "obanai_snake")
@@ -352,8 +352,8 @@ class BootScene extends Phaser.Scene {
 
     // 22. 사네미 (type: "sanemi_wind")
     this.load.spritesheet("attack_sanemi", "sanemi_attack.png", {
-      frameWidth: 35, // 5
-      frameHeight: 32,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 23. 교메이 (type: "gyomei_stone")
@@ -370,8 +370,8 @@ class BootScene extends Phaser.Scene {
 
     // 25. 탄지로(히노카미) (type: "tanjiro_sun")
     this.load.spritesheet("attack_tanjiro_sun", "tanjiro_sun_attack.png", {
-      frameWidth: 400 / 8,
-      frameHeight: 50,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 26. 젠이츠(신속) (type: "zenitsu_god")
@@ -410,8 +410,8 @@ class BootScene extends Phaser.Scene {
 
     // 31. 이노스케(각성) (type: "inosuke_awake_beast")
     this.load.spritesheet("attack_inosuke_awake", "inosuke_awake_attack.png", {
-      frameWidth: 152 / 4, // 38px
-      frameHeight: 32,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // ===============================================================
@@ -448,8 +448,8 @@ class BootScene extends Phaser.Scene {
 
     // 36. 요리이치 영식 (type: "yoriichi_doll")
     this.load.spritesheet("attack_yoriichi_zero", "yoriichi_zero_attack.png", {
-      frameWidth: 64, // 5
-      frameHeight: 48,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 37. 코쿠시보(상현1) (type: "kokushibo_moon")
@@ -460,8 +460,8 @@ class BootScene extends Phaser.Scene {
 
     // 38. 탄지로(오니의 왕) (type: "tanjiro_demon_king")
     this.load.spritesheet("attack_tanjiro_king", "tanjiro_king_attack.png", {
-      frameWidth: 64, // 15
-      frameHeight: 49,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 39. 쌍둥이의 운명 (type: "twin_destiny_combo")
@@ -481,7 +481,7 @@ class BootScene extends Phaser.Scene {
     });
     // 2. 텐겐(악보) - tengen_musical_score
     this.load.spritesheet("attack_tengen_score", "tengen_score_attack.png", {
-      frameWidth: 128,
+      frameWidth: 64,
       frameHeight: 64,
     });
     // 3. 시노부(종의형) - shinobu_last_dance
@@ -501,7 +501,7 @@ class BootScene extends Phaser.Scene {
     });
     // 6. 오바나이(반점) - obanai_serpent_god
     this.load.spritesheet("attack_obanai_mark", "obanai_mark_attack.png", {
-      frameWidth: 1248 / 13,
+      frameWidth: 64,
       frameHeight: 64,
     });
     // 7. 미츠리(반점) - mitsuri_love_cat
@@ -511,8 +511,8 @@ class BootScene extends Phaser.Scene {
     });
     // 8. 렌고쿠(마지막 미소) - rengoku_smile_effect
     this.load.spritesheet("attack_rengoku_smile", "rengoku_smile_attack.png", {
-      frameWidth: 400 / 8,
-      frameHeight: 50,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // [신규 Tier 6]
@@ -529,7 +529,7 @@ class BootScene extends Phaser.Scene {
     // 11. 사네미(바람의 신) - sanemi_wind_god
     this.load.spritesheet("attack_sanemi_god", "sanemi_god_attack.png", {
       frameWidth: 64,
-      frameHeight: 48,
+      frameHeight: 64,
     });
     // 12. 렌고쿠(마음의 불꽃) - rengoku_legend_fire
     this.load.spritesheet(
@@ -556,8 +556,8 @@ class BootScene extends Phaser.Scene {
 
     // 15. 네즈코 (태양의 극복 - 붉은 태양)
     this.load.spritesheet("attack_nezuko_sun", "nezuko_sun_attack.png", {
-      frameWidth: 50, // 8
-      frameHeight: 50,
+      frameWidth: 64,
+      frameHeight: 64,
     });
 
     // 유닛 이미지 설정
@@ -1169,7 +1169,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_giyu",
         frames: this.anims.generateFrameNumbers("attack_giyu", {
           start: 0,
-          end: 5,
+          end: 7,
         }),
         frameRate: 10,
         repeat: -1,
@@ -1273,7 +1273,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_sanemi",
         frames: this.anims.generateFrameNumbers("attack_sanemi", {
           start: 0,
-          end: 4,
+          end: 8,
         }),
         frameRate: 10,
         repeat: -1,
@@ -1360,7 +1360,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_muichiro_mark",
         frames: this.anims.generateFrameNumbers("attack_muichiro_mark", {
           start: 0,
-          end: 8,
+          end: 9,
         }),
         frameRate: 10,
         repeat: -1,
@@ -1384,7 +1384,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_inosuke_awake",
         frames: this.anims.generateFrameNumbers("attack_inosuke_awake", {
           start: 0,
-          end: 3,
+          end: 9,
         }),
         frameRate: 10,
         repeat: -1,
@@ -1450,7 +1450,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_yoriichi_zero",
         frames: this.anims.generateFrameNumbers("attack_yoriichi_zero", {
           start: 0,
-          end: 4,
+          end: 7,
         }),
         frameRate: 22, // 난타
         repeat: -1,
@@ -1474,7 +1474,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_tanjiro_king",
         frames: this.anims.generateFrameNumbers("attack_tanjiro_king", {
           start: 0,
-          end: 14,
+          end: 9,
         }),
         frameRate: 218,
         repeat: -1,
@@ -1515,7 +1515,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_tengen_score",
         frames: this.anims.generateFrameNumbers("attack_tengen_score", {
           start: 0,
-          end: 10,
+          end: 7,
         }),
         frameRate: 12,
         repeat: -1,
@@ -1527,7 +1527,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_shinobu_dance",
         frames: this.anims.generateFrameNumbers("attack_shinobu_dance", {
           start: 0,
-          end: 8,
+          end: 7,
         }),
         frameRate: 12,
         repeat: -1,
@@ -1563,7 +1563,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_obanai_mark",
         frames: this.anims.generateFrameNumbers("attack_obanai_mark", {
           start: 0,
-          end: 12,
+          end: 7,
         }),
         frameRate: 15,
         repeat: -1,
@@ -1575,7 +1575,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_mitsuri_mark",
         frames: this.anims.generateFrameNumbers("attack_mitsuri_mark", {
           start: 0,
-          end: 11,
+          end: 9,
         }),
         frameRate: 15,
         repeat: -1,
@@ -1601,7 +1601,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_zenitsu_7th",
         frames: this.anims.generateFrameNumbers("attack_zenitsu_7th", {
           start: 0,
-          end: 12,
+          end: 7,
         }),
         frameRate: 20,
         repeat: -1,
@@ -1625,7 +1625,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_sanemi_god",
         frames: this.anims.generateFrameNumbers("attack_sanemi_god", {
           start: 0,
-          end: 4,
+          end: 7,
         }),
         frameRate: 10,
         repeat: -1,
@@ -1637,7 +1637,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_rengoku_legend",
         frames: this.anims.generateFrameNumbers("attack_rengoku_legend", {
           start: 0,
-          end: 8,
+          end: 7,
         }),
         frameRate: 15,
         repeat: -1,
@@ -1662,7 +1662,7 @@ class GameScene extends Phaser.Scene {
         key: "anim_muichiro_trans",
         frames: this.anims.generateFrameNumbers("attack_muichiro_trans", {
           start: 0,
-          end: 8,
+          end: 9,
         }),
         frameRate: 20,
         repeat: 0,
@@ -2581,9 +2581,13 @@ class GameScene extends Phaser.Scene {
       .setAlpha(0)
       .setOrigin(0.5); // 중심 기준
 
-    // 화면의 80% 영역(최대 크기 제한) 설정
-    const maxW = 1280 * 0.8;
-    const maxH = 720 * 0.8;
+    const wideCutscenes = new Set([
+      "mitsuri_cutscene", "zenitsu_god_cutscene",
+      "inosuke_awake_cutscene", "inosuke_king_cutscene",
+    ]);
+    const isWide = wideCutscenes.has(imageKey);
+    const maxW = 1280 * (isWide ? 0.6 : 0.85);
+    const maxH = 720 * (isWide ? 0.6 : 0.85);
     // 원본 이미지 크기 가져오기
     const imgW = img.width;
     const imgH = img.height;
@@ -4330,6 +4334,7 @@ class GameScene extends Phaser.Scene {
         break;
     }
 
+    scaleRatio *= (32 / b.width);
     b.setScale(scaleRatio);
 
     // 투사체 충돌 이미지크기 설정!
